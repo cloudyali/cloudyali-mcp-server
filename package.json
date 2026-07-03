@@ -1,0 +1,62 @@
+{
+  "name": "@cloudyali/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server exposing CloudYali cost, budgets, recommendations, anomalies, and inventory data to Claude (and other MCP-capable AI clients). Browser-based Cognito auth with auto-refresh; hard-locked to read-only operations.",
+  "license": "MIT",
+  "author": "CloudYali <support@cloudyali.io> (https://cloudyali.io)",
+  "homepage": "https://github.com/cloudyali/cloudyali-mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cloudyali/cloudyali-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cloudyali/cloudyali-mcp-server/issues"
+  },
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "model-context-protocol",
+    "claude",
+    "cloudyali",
+    "cy",
+    "finops",
+    "cloud-cost",
+    "cost-management",
+    "ai"
+  ],
+  "type": "module",
+  "bin": {
+    "cloudyali-mcp": "dist/index.js",
+    "cloudyali-mcp-login": "dist/login.js"
+  },
+  "files": [
+    "dist",
+    "server.json"
+  ],
+  "mcpName": "io.github.cloudyali/cloudyali-mcp-server",
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "start": "node dist/index.js",
+    "login": "node dist/login.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "version": "node scripts/sync-version.mjs && git add server.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.9",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

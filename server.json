@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.cloudyali/cloudyali-mcp-server",
+  "title": "CloudYali",
+  "description": "Read-only CloudYali cost, budgets, recommendations, anomalies, and inventory data for MCP clients.",
+  "repository": {
+    "url": "https://github.com/cloudyali/cloudyali-mcp-server",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@cloudyali/mcp-server",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CLOUDYALI_API_URL",
+          "description": "Base URL of the CloudYali API.",
+          "default": "https://api.cloudyali.io"
+        },
+        {
+          "name": "PORTAL_URL",
+          "description": "Portal that serves the /cli-login browser auth page.",
+          "default": "https://console.cloudyali.io"
+        },
+        {
+          "name": "CLOUDYALI_JWT",
+          "description": "Optional one-shot Cognito access-token override; bypasses the browser login flow.",
+          "isSecret": true,
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
