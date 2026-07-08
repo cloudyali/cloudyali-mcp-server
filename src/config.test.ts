@@ -35,27 +35,17 @@ describe("PORTAL_URL", () => {
 
 describe("CLOUDYALI_API_URL", () => {
   const ORIGINAL_API = process.env.CLOUDYALI_API_URL;
-  const ORIGINAL_LEGACY = process.env.QUERYSERVICE_URL;
 
   beforeEach(() => {
     delete process.env.CLOUDYALI_API_URL;
-    delete process.env.QUERYSERVICE_URL;
   });
 
   afterEach(() => {
     if (ORIGINAL_API === undefined) delete process.env.CLOUDYALI_API_URL;
     else process.env.CLOUDYALI_API_URL = ORIGINAL_API;
-    if (ORIGINAL_LEGACY === undefined) delete process.env.QUERYSERVICE_URL;
-    else process.env.QUERYSERVICE_URL = ORIGINAL_LEGACY;
   });
 
   it("defaults to the production API URL when unset", async () => {
-    const { CLOUDYALI_API_URL } = await loadConfig();
-    expect(CLOUDYALI_API_URL).toBe("https://api.cloudyali.io");
-  });
-
-  it("ignores the removed QUERYSERVICE_URL legacy alias", async () => {
-    process.env.QUERYSERVICE_URL = "https://internal.example";
     const { CLOUDYALI_API_URL } = await loadConfig();
     expect(CLOUDYALI_API_URL).toBe("https://api.cloudyali.io");
   });

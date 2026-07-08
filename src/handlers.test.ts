@@ -38,6 +38,20 @@ describe("TOOLS", () => {
     expect(TOOLS.find((t) => t.name === "execute_action")?.annotations?.readOnlyHint).toBe(true);
     expect(TOOLS.find((t) => t.name === "login")?.annotations?.openWorldHint).toBe(true);
   });
+
+  it("annotates every tool with a readOnlyHint", () => {
+    for (const t of TOOLS) {
+      expect(typeof t.annotations?.readOnlyHint, `${t.name} readOnlyHint`).toBe("boolean");
+    }
+  });
+
+  it("marks the two pure local reads as read-only and non-network", () => {
+    for (const name of ["search_actions", "list_categories"]) {
+      const a = TOOLS.find((t) => t.name === name)?.annotations;
+      expect(a?.readOnlyHint, `${name} readOnlyHint`).toBe(true);
+      expect(a?.openWorldHint, `${name} openWorldHint`).toBe(false);
+    }
+  });
 });
 
 describe("handleToolCall: search_actions", () => {
@@ -51,6 +65,13 @@ describe("handleToolCall: search_actions", () => {
   it("defaults the limit to 10 when it is not a number", async () => {
     const res = await handleToolCall("search_actions", { query: "cost", limit: "nope" });
     expect(JSON.parse(textOf(res)).count).toBeLessThanOrEqual(10);
+  });
+
+  it("clamps a negative limit to one result instead of inverting the slice", async () => {
+    // 'cost' matches multiple actions; a raw negative limit would slice from the
+    // end and return nearly all of them. Clamp must floor it to a single result.
+    const res = await handleToolCall("search_actions", { query: "cost", limit: -1 });
+    expect(JSON.parse(textOf(res)).count).toBe(1);
   });
 });
 

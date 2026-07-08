@@ -19,10 +19,9 @@ import { spawn } from "node:child_process";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { createHash, randomBytes } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { PORTAL_URL } from "./config.js";
 import { nowEpochSeconds, saveCredentials, StoredCredentials } from "./tokenStore.js";
+import { isDirectRun } from "./cli.js";
 
 function openBrowser(url: string): void {
   // spawn with an argv array — never a shell string, so a hostile PORTAL_URL
@@ -266,20 +265,7 @@ async function main() {
 // Only run the CLI flow when this file is invoked directly (e.g.,
 // `node dist/login.js` or the cloudyali-mcp-login bin). When imported by
 // index.ts to expose login as an MCP tool, we just need the awaitLogin export.
-// realpath both sides: npm bin shims invoke the file through a symlink, so a
-// plain argv[1] comparison would silently skip main().
-const isCliEntry = (() => {
-  try {
-    return (
-      !!process.argv[1] &&
-      realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
-    );
-  } catch {
-    return false;
-  }
-})();
-
-if (isCliEntry) {
+if (isDirectRun(import.meta.url)) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

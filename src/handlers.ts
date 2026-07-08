@@ -27,9 +27,14 @@ export const TOOLS: Tool[] = [
           enum: ["cost", "budgets", "recommendations", "anomalies", "inventory"],
           description: "Optional category filter.",
         },
-        limit: { type: "integer", description: "Max results. Default 10." },
+        limit: { type: "integer", description: "Max results. Default 10, clamped to 1–100." },
       },
       required: ["query"],
+    },
+    annotations: {
+      title: "Search CloudYali actions",
+      readOnlyHint: true,
+      openWorldHint: false, // searches an in-memory catalog; no network
     },
   },
   {
@@ -69,6 +74,11 @@ export const TOOLS: Tool[] = [
     description:
       "Quick overview of the CloudYali (\"cy\") catalog: returns the counts of available actions per category, plus the configured base URL and auth source. Useful as a first orientation call when a user mentions CloudYali, cy, or cloud cost.",
     inputSchema: { type: "object", properties: {} },
+    annotations: {
+      title: "List CloudYali catalog categories",
+      readOnlyHint: true,
+      openWorldHint: false, // reads local catalog + config only; no network
+    },
   },
   {
     name: "login",
@@ -96,7 +106,10 @@ export async function handleToolCall(
     if (name === "search_actions") {
       const query = String(args.query ?? "");
       const category = args.category ? String(args.category) : undefined;
-      const limit = typeof args.limit === "number" ? args.limit : 10;
+      // Clamp to a sane integer range: a raw negative limit would invert
+      // searchActions' slice and leak nearly the whole catalog.
+      const rawLimit = typeof args.limit === "number" ? Math.trunc(args.limit) : 10;
+      const limit = Math.min(Math.max(1, rawLimit), 100);
       const matches = searchActions(query, category, limit);
       return {
         content: [

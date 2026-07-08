@@ -26,10 +26,9 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { PACKAGE_VERSION } from "./config.js";
 import { TOOLS, handleToolCall } from "./handlers.js";
+import { isDirectRun } from "./cli.js";
 
 export const server = new Server(
   {
@@ -57,18 +56,7 @@ async function main() {
 // Only connect the stdio transport when run directly (node dist/index.js / the
 // cloudyali-mcp bin). Importing this module (e.g. in tests) registers the
 // handlers but does not start the server.
-const isCliEntry = (() => {
-  try {
-    return (
-      !!process.argv[1] &&
-      realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
-    );
-  } catch {
-    return false;
-  }
-})();
-
-if (isCliEntry) {
+if (isDirectRun(import.meta.url)) {
   main().catch((err) => {
     console.error("cloudyali-mcp failed to start:", err);
     process.exit(1);

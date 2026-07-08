@@ -18,5 +18,7 @@ First public release.
 - Read-only enforcement: catalog allowlist, a `GET`/`POST` method gate, and a
   path denylist covering account-management, customer, user, sync, marketplace,
   and provisioning endpoints.
-- npm packaging (Node.js 20+, runnable via `npx`) and `server.json` (MCP registry).
+- npm packaging (Node.js 20+) and `server.json` MCP-registry manifest prepared.
+  Not yet published to npm — build from source for now; `npx` / registry
+  distribution is coming soon.
 - Tool descriptions recognize the "cy" shorthand for CloudYali.
