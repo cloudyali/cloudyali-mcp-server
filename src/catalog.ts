@@ -276,136 +276,98 @@ export const CATALOG: Action[] = [
   // /v1/budgets/:id, delete: DELETE /v1/budgets/:id) are intentionally
   // excluded — see the policy comment near BLOCKED_PATH_PATTERNS below.
 
-  // -------------------- RECOMMENDATIONS --------------------
+  // -------------------- RECOMMENDATIONS (cost-savings lifecycle) --------------------
+  // Rewritten against the new cost-savings-lifecycle API (/v1/savings/*, US-032).
+  // These are the SAME endpoints the portal UI and the weekly/monthly reports
+  // consume, so an agent sees numbers identical-by-construction (M9 parity). The
+  // old /v1/recommendations/* endpoints are decommissioned (410) in the same
+  // release (US-030) — no catalog action points at them.
   {
     id: "recommendations.list",
     method: "GET",
-    path: "/v1/recommendations",
+    path: "/v1/savings/opportunities",
     category: "recommendations",
-    summary: "List cost-savings recommendations with filters",
+    summary: "List cost-savings opportunities (the lifecycle queue) with filters",
     description:
-      "List active recommendations across clouds (AWS, GCP, Azure, custom). Filter by provider, status, resource type, assignee, and minimum monthly savings. Sort by savings, ROI, or detection time.",
+      "List cost-savings opportunities across clouds (AWS, GCP, Azure, plus schema-ready openai/anthropic). Each opportunity carries a lifecycle state (identified, acknowledged, in_progress, implemented, ignored, expired), a category/risk/effort, monthly USD savings, source attribution, and a derived `flagged` (no-longer-detected) marker. Filter by any dimension; results are server-paginated and sorted. This is the same endpoint the portal queue and reports use.",
     queryParams: {
       provider: {
         type: "array",
         items: { type: "string" },
-        description: "Cloud providers: aws, gcp, azure, custom. Pass an array; values are sent as repeated params.",
+        description: "Cloud providers: aws, gcp, azure, openai, anthropic, databricks. Repeated params.",
       },
-      status: {
+      state: {
         type: "array",
         items: { type: "string" },
-        description: "Statuses: new, working_on_it, done, dismissed.",
+        description: "Lifecycle states: identified, acknowledged, in_progress, implemented, ignored, expired.",
       },
-      resourceType: {
+      category: {
         type: "array",
         items: { type: "string" },
-        description: "Resource type filter (e.g., EbsVolume, Ec2Instance).",
+        description: "Categories: wastage, rightsizing, commitment, other.",
       },
-      assignedUser: {
+      risk: { type: "array", items: { type: "string" }, description: "Risk levels: low, medium, high." },
+      effort: { type: "array", items: { type: "string" }, description: "Effort levels: low, medium, high." },
+      account: { type: "array", items: { type: "string" }, description: "Account / project / subscription IDs. Repeated params." },
+      region: { type: "array", items: { type: "string" }, description: "Region codes." },
+      parent: { type: "array", items: { type: "string" }, description: "Parent resource UIDs (e.g. the volume behind a snapshot)." },
+      assignee: {
         type: "array",
-        items: { type: "integer" },
-        description: "User IDs. Pass -1 to filter for unassigned.",
-        serializeArray: "comma",
+        items: { type: "string" },
+        description: "Assigned user IDs, or the literal 'unassigned'. Repeated params.",
       },
-      minSavings: { type: "number", description: "Minimum monthly savings ($). -1 = no filter." },
-      sortBy: {
+      flagged: { type: "boolean", description: "true = only no-longer-detected (flagged) opportunities; false = only un-flagged." },
+      minSavings: { type: "number", description: "Minimum monthly USD savings." },
+      text: { type: "string", description: "Free-text (ILIKE) match on title / resource identity." },
+      sort: {
         type: "string",
-        enum: ["savings_desc", "roi_desc", "detected_desc"],
-        description: "Sort order.",
+        enum: ["savings_desc", "savings_asc", "detected_desc", "detected_asc"],
+        description: "Sort order. Default: savings_desc.",
       },
-      limit: { type: "integer", description: "Max rows. Default 50." },
-      offset: { type: "integer", description: "Pagination offset." },
+      limit: { type: "integer", description: "Max rows (1..1000). Default 25." },
+      offset: { type: "integer", description: "Pagination offset. Default 0." },
     },
     readOnly: true,
   },
   {
     id: "recommendations.summary",
     method: "GET",
-    path: "/v1/recommendations/summary",
+    path: "/v1/savings/summary",
     category: "recommendations",
-    summary: "Get aggregate recommendation analytics (totals, savings rollup)",
+    summary: "Get cost-savings KPIs (funnel, projected + realized savings)",
     description:
-      "Returns counts by status, total potential savings, and savings by provider/resource-type. NOTE: provider and resourceType are honored only when a SINGLE value is given — passing multiple silently returns the all-providers/all-types rollup (unlike recommendations.list, which does true multi-value filtering). status is genuinely multi-value. Omit all filters for the unfiltered rollup.",
+      "Single KPI source (US-018): the lifecycle funnel (counts per state), projected open-state savings sliced by category / bucket / provider, realized savings in the period (frozen ledger, ignores state filters), new/reopened occurrence counts, plus flagged and unconverted counts. Accepts the SAME filter set as recommendations.list. The period defaults to the current UTC month-to-date; override with from/to. This is the exact endpoint the dashboard and reports use — numbers match by construction.",
     queryParams: {
-      provider: {
-        type: "string",
-        description: "Single cloud provider: aws, gcp, azure, databricks, or custom. Only ONE value is honored; the backend drops the filter (returns all providers) if given more than one.",
-      },
-      status: {
-        type: "array",
-        items: { type: "string" },
-        description: "Statuses: new, working_on_it, done, dismissed. Multi-value (OR).",
-      },
-      resourceType: {
-        type: "string",
-        description: "Single resource type (e.g., EbsVolume, Ec2Instance). Only ONE value is honored; multiple values disable the filter.",
-      },
-      minSavings: { type: "number", description: "Minimum monthly savings ($). -1 = no filter." },
-      assignedUser: {
-        type: "array",
-        items: { type: "integer" },
-        description: "User IDs, or the single string 'unassigned'.",
-        serializeArray: "comma",
-      },
-    },
-    readOnly: true,
-  },
-  {
-    id: "recommendations.filter_options",
-    method: "GET",
-    path: "/v1/recommendations/filter-options",
-    category: "recommendations",
-    summary: "List valid filter values for recommendation listing",
-    description: "Returns the distinct resourceTypes, resourceLocations, and opportunityTypes present in this customer's recommendations, for building recommendations.list filters. Does NOT return providers, statuses, or users — use the documented provider/status enums, and recommendations.users for assignees.",
-    readOnly: true,
-  },
-  {
-    id: "recommendations.top_savings",
-    method: "GET",
-    path: "/v1/recommendations/top-savings",
-    category: "recommendations",
-    summary: "Get the top-N recommendations ranked by potential savings",
-    description: "Convenience endpoint returning the highest-impact recommendations across all providers.",
-    queryParams: {
-      limit: { type: "integer", description: "Number of top recommendations to return. Default ~10." },
+      provider: { type: "array", items: { type: "string" }, description: "Cloud providers filter (see recommendations.list)." },
+      state: { type: "array", items: { type: "string" }, description: "Lifecycle states filter." },
+      category: { type: "array", items: { type: "string" }, description: "Categories filter." },
+      risk: { type: "array", items: { type: "string" }, description: "Risk levels filter." },
+      effort: { type: "array", items: { type: "string" }, description: "Effort levels filter." },
+      account: { type: "array", items: { type: "string" }, description: "Account IDs filter." },
+      region: { type: "array", items: { type: "string" }, description: "Region codes filter." },
+      parent: { type: "array", items: { type: "string" }, description: "Parent resource UID filter." },
+      assignee: { type: "array", items: { type: "string" }, description: "Assignee filter (user IDs or 'unassigned')." },
+      flagged: { type: "boolean", description: "Flagged (no-longer-detected) filter." },
+      minSavings: { type: "number", description: "Minimum monthly USD savings." },
+      text: { type: "string", description: "Free-text (ILIKE) filter." },
+      from: { type: "string", description: "Realized/occurrence period start (RFC3339 or YYYY-MM-DD). Default: start of current UTC month." },
+      to: { type: "string", description: "Realized/occurrence period end (RFC3339 or YYYY-MM-DD). Default: now." },
     },
     readOnly: true,
   },
   {
     id: "recommendations.get",
     method: "GET",
-    path: "/v1/recommendations/:id",
+    path: "/v1/savings/opportunities/:id",
     category: "recommendations",
-    summary: "Get a single recommendation by numeric ID",
-    description: "Full detail for one recommendation including savings, resource metadata, and current lifecycle state.",
+    summary: "Get one cost-savings opportunity with runbook, why and provenance",
+    description:
+      "Full detail for one opportunity: the opportunity row, savings provenance (how the number was computed), the 'why' evidence, a rendered runbook (authored template or a never-blank structured fallback), id-rotation history, per-occurrence detection windows, the audit timeline, and any realized ledger records.",
     pathParams: {
-      id: { type: "integer", description: "Recommendation ID.", required: true },
+      id: { type: "integer", description: "Opportunity ID (numeric).", required: true },
     },
     readOnly: true,
   },
-  {
-    id: "recommendations.history",
-    method: "GET",
-    path: "/v1/recommendations/:id/history",
-    category: "recommendations",
-    summary: "Get the status change history for a recommendation",
-    description: "Audit log of status transitions and assignments for one recommendation.",
-    pathParams: {
-      id: { type: "integer", description: "Recommendation ID.", required: true },
-    },
-    readOnly: true,
-  },
-  {
-    id: "recommendations.users",
-    method: "GET",
-    path: "/v1/recommendations/users",
-    category: "recommendations",
-    summary: "List users available for recommendation assignment",
-    description: "Returns the set of users the current customer can assign recommendations to.",
-    readOnly: true,
-  },
-  // NOTE: recommendation write endpoints (update_status, assign) are intentionally
-  // excluded — see the policy comment near BLOCKED_PATH_PATTERNS below.
 
   // -------------------- ANOMALIES --------------------
   {
@@ -649,14 +611,13 @@ export const CATALOG: Action[] = [
   },
 ];
 
-// Policy: this MCP is read-only. Write endpoints (PUT/DELETE, status updates,
-// status transitions, anomaly feedback, alert-preference writes) are not
-// included in CATALOG at all — there is no entry to invoke. The runtime
-// guard below (`isBlockedAction`) plus this path denylist exist as belt-and-
-// braces protection against future catalog additions: anyone adding an
-// action whose method or path looks mutating will see it filtered out and,
-// if invoked by id, rejected with a specific reason. Make state changes via
-// the portal at console.cloudyali.io.
+// Policy: this MCP is read-only. Every mutation — account/customer/user CRUD,
+// savings-lifecycle transitions, status updates, anomaly feedback, alert-
+// preference writes, PUT/DELETE of any kind — is absent from CATALOG and, if
+// ever added, is rejected at runtime by `isBlockedAction`. The guard is an
+// allowlist on method plus an explicit readOnly flag plus the path denylist
+// below, so a future addition has to defeat three checks rather than one.
+// Make state changes via the portal at console.cloudyali.io.
 //
 // Path patterns that are always blocked, regardless of method or readOnly:
 export const BLOCKED_PATH_PATTERNS: RegExp[] = [
@@ -693,13 +654,15 @@ export function isBlockedAction(a: Action): { blocked: boolean; reason?: string 
   return { blocked: false };
 }
 
+// READ_ONLY_CATALOG: the actions actually reachable via search_actions /
+// execute_action. Every entry is a read.
 export const READ_ONLY_CATALOG: Action[] = CATALOG.filter((a) => {
   const block = isBlockedAction(a);
   if (block.blocked) {
     // A blocked entry in CATALOG is an authoring mistake — surface it loudly
     // (stderr is safe for a stdio MCP server) instead of silently filtering.
     process.stderr.write(
-      `cloudyali-mcp: catalog entry "${a.id}" is excluded from the read-only surface: ${block.reason}\n`,
+      `cloudyali-mcp: catalog entry "${a.id}" is excluded from the exposed surface: ${block.reason}\n`,
     );
   }
   return !block.blocked;

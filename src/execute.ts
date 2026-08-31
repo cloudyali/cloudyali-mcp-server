@@ -7,6 +7,9 @@ import { findAction, isBlockedAction, searchActions } from "./catalog.js";
 import { getValidAccessToken } from "./auth.js";
 import { buildQueryString, substitutePath } from "./request.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, STATIC_JWT_OVERRIDE } from "./config.js";
+import { apiThrottle } from "./throttle.js";
+import { ProjectOptions, projectBody, redact } from "./project.js";
+import { RESPONSE_POLICY } from "./shapes.js";
 
 async function buildHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const token = await getValidAccessToken({ forceRefresh });
@@ -86,6 +89,9 @@ export async function requestWithRetry(
       throw new Error("Request aborted by the caller.");
     }
     try {
+      // Inside the retry loop on purpose: a retry is another request against the
+      // same backend, and a 5xx-driven retry storm is precisely what we bound.
+      await apiThrottle.take(opts.signal);
       const timeout = AbortSignal.timeout(timeoutMs);
       const signal = opts.signal ? anySignal([timeout, opts.signal]) : timeout;
       const res = await fetch(url, { ...init, signal });
@@ -169,11 +175,96 @@ export async function executeAction(args: {
     request: {
       action_id: action.id,
       method: action.method,
-      url,
+      // The path TEMPLATE only (review note, GA/public build): the caller already
+      // knows its own arguments, so echoing the fully-substituted URL (host +
+      // path params + query values) back to an untrusted MCP client adds nothing
+      // and leaks the deployment host and request internals verbatim.
+      path: action.path,
     },
     status: res.status,
     ok: res.ok,
-    body: parsed,
+    // Both directions are filtered. Non-2xx bodies are trimmed to the API's
+    // intentional error contract; 2xx bodies — which carry far more data — go
+    // through the per-action response policy. Neither is relayed verbatim.
+    body: res.ok ? shapeResponse(action.id, parsed) : trimErrorBody(parsed),
   };
   return JSON.stringify(result, null, 2);
+}
+
+// Set CLOUDYALI_MCP_SHAPE_AUDIT=1 to have every dropped field path written to
+// stderr. That is how you close the gap on an action still using redaction:
+// run a real query, read what was dropped, and promote it to an allowlist.
+const SHAPE_AUDIT = process.env.CLOUDYALI_MCP_SHAPE_AUDIT === "1";
+
+/**
+ * Apply the action's response policy to a successful body.
+ *
+ * Fails closed: an action with no policy returns nothing but a pointer to the
+ * fix. That is deliberate — the failure mode of this system is a new action
+ * shipping without anyone deciding what it may expose, and a visible empty
+ * result gets fixed while a silent passthrough does not.
+ */
+export function shapeResponse(actionId: string, parsed: unknown): unknown {
+  const policy = RESPONSE_POLICY[actionId];
+  const opts: ProjectOptions | undefined = SHAPE_AUDIT ? { dropped: new Set<string>() } : undefined;
+
+  let out: unknown;
+  if (!policy) {
+    process.stderr.write(
+      `cloudyali-mcp: no response policy for action "${actionId}"; body withheld. Add one in src/shapes.ts.\n`,
+    );
+    return { note: `No response policy is defined for "${actionId}", so its body was withheld.` };
+  }
+  out = policy.kind === "allowlist" ? projectBody(parsed, policy.shape, opts) : redact(parsed, opts);
+
+  if (opts?.dropped?.size) {
+    process.stderr.write(
+      `cloudyali-mcp: shape audit ${actionId} dropped ${opts.dropped.size} path(s): ${[...opts.dropped]
+        .sort()
+        .join(", ")}\n`,
+    );
+  }
+  return out;
+}
+
+// Longest error string relayed to the client per field.
+const MAX_ERROR_FIELD_LEN = 300;
+
+// Error-contract fields a client legitimately needs: the svcerror shape
+// {code, message, details} plus the savings transition-result fields
+// (error/current_status/allowed_transitions/missing) that drive retry UX.
+const ERROR_FIELD_ALLOWLIST = [
+  "code",
+  "message",
+  "details",
+  "error",
+  "current_status",
+  "allowed_transitions",
+  "missing",
+] as const;
+
+// trimErrorBody reduces a non-2xx backend body to the allowlisted error-contract
+// fields (review note, GA/public build): anything else — stack traces, driver
+// errors, oversized payloads a misconfigured backend might emit — is dropped
+// rather than relayed verbatim to an untrusted MCP client. Strings are capped;
+// string arrays (allowed_transitions/missing) are kept as-is.
+export function trimErrorBody(parsed: unknown): Record<string, unknown> {
+  const cap = (s: string) =>
+    s.length > MAX_ERROR_FIELD_LEN ? `${s.slice(0, MAX_ERROR_FIELD_LEN)}…` : s;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const src = parsed as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of ERROR_FIELD_ALLOWLIST) {
+      const v = src[key];
+      if (typeof v === "string" && v.length > 0) out[key] = cap(v);
+      else if (typeof v === "number") out[key] = v;
+      else if (Array.isArray(v) && v.every((e) => typeof e === "string")) out[key] = v;
+    }
+    if (Object.keys(out).length === 0) out.error = "request failed";
+    return out;
+  }
+  if (typeof parsed === "string" && parsed.trim().length > 0) {
+    return { error: cap(parsed.trim()) };
+  }
+  return { error: "request failed" };
 }

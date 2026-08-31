@@ -153,7 +153,7 @@ describe("executeAction", () => {
     expect(vi.mocked(fetch).mock.calls[0][1]?.body).toBe("{}");
   });
 
-  it("returns a non-JSON response body as a raw string", async () => {
+  it("wraps a non-JSON error body as a capped error string", async () => {
     mockToken.mockResolvedValue("tok-1");
     // 400 is non-transient (no retry) and its body is not JSON.
     vi.mocked(fetch).mockResolvedValue(new Response("Bad Request: not json", { status: 400 }));
@@ -161,7 +161,62 @@ describe("executeAction", () => {
     const result = JSON.parse(await executeAction({ id: "recommendations.summary" }));
     expect(result.status).toBe(400);
     expect(result.ok).toBe(false);
-    expect(result.body).toBe("Bad Request: not json");
+    expect(result.body).toEqual({ error: "Bad Request: not json" });
+  });
+
+  it("echoes only the path template, never the substituted URL", async () => {
+    mockToken.mockResolvedValue("tok-1");
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}));
+
+    const result = JSON.parse(
+      await executeAction({
+        id: "anomalies.summary",
+        query_params: { startDate: "2026-05-01", endDate: "2026-05-31" },
+      }),
+    );
+
+    expect(result.request.path).toBe("/v1/anomalies/summary");
+    expect(result.request.url).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("api.example.com");
+    expect(JSON.stringify(result)).not.toContain("2026-05-01");
+  });
+
+  it("trims a non-2xx JSON body to the error-contract allowlist", async () => {
+    mockToken.mockResolvedValue("tok-1");
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(500, {
+        code: 500,
+        message: "internal error",
+        stack: "goroutine 1 [running]: main.leak(0xc000)",
+        query: "SELECT * FROM cost_opportunity WHERE ...",
+        huge: "x".repeat(5000),
+      }),
+    );
+
+    const result = JSON.parse(await executeAction({ id: "recommendations.summary" }));
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ code: 500, message: "internal error" });
+    expect(JSON.stringify(result)).not.toContain("goroutine");
+    expect(JSON.stringify(result)).not.toContain("SELECT");
+  });
+
+  it("keeps transition-result retry fields on a 409 and passes 2xx bodies through", async () => {
+    mockToken.mockResolvedValue("tok-1");
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(409, {
+        error: "illegal transition",
+        current_status: "identified",
+        allowed_transitions: ["acknowledged", "ignored"],
+        internal_hint: "should be dropped",
+      }),
+    );
+
+    const result = JSON.parse(await executeAction({ id: "recommendations.summary" }));
+    expect(result.body).toEqual({
+      error: "illegal transition",
+      current_status: "identified",
+      allowed_transitions: ["acknowledged", "ignored"],
+    });
   });
 });
 

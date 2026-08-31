@@ -13,7 +13,7 @@ export const TOOLS: Tool[] = [
   {
     name: "search_actions",
     description:
-      "Search the read-only CloudYali (\"cy\") API catalog for cloud cost, spend, budgets, savings recommendations, cost anomalies, and resource inventory. Use this for any CloudYali / cy / cloud-cost / FinOps / cloud-inventory question. Returns matching actions with their IDs, descriptions, and parameter schemas. Call this first to discover the right action, then call execute_action with the chosen id. Scope: cost reports/aggregation/spend/filters, budgets (list/summary/get/resources/history), recommendations (list/summary/top-savings/get/history), anomalies (list/summary/get/preferences-read), and inventory (resource list/search/detail plus provider/type/region/account/tag filters). All mutating endpoints (create/PUT/DELETE/status updates/assignments/feedback) AND all account / customer / user / sync / claim / registration endpoints are excluded — make those changes in the portal.",
+      "Search the read-only CloudYali (\"cy\") API catalog for cloud cost, spend, budgets, cost-savings opportunities, cost anomalies, and resource inventory. Use this for any CloudYali / cy / cloud-cost / FinOps / cloud-inventory question. Returns matching actions with their IDs, descriptions, and parameter schemas. Call this first to discover the right action, then call execute_action with the chosen id. Scope: cost reports/aggregation/spend/filters; budgets (list/summary/get/resources/history); cost-savings opportunities (list with lifecycle filters, KPI summary, per-opportunity detail with runbook and provenance); anomalies (list/summary/get/preferences-read); and inventory (resource list/search/detail plus provider/type/region/account/tag filters). These are the same endpoints the portal UI and reports use, so the numbers match. This server performs NO writes: every mutation — savings-lifecycle transitions, status updates, assignments, anomaly feedback, alert-preference writes, PUT/DELETE, and all account / customer / user / sync / claim / registration endpoints — is blocked. Make those changes in the portal.",
     inputSchema: {
       type: "object",
       properties: {
@@ -40,7 +40,7 @@ export const TOOLS: Tool[] = [
   {
     name: "execute_action",
     description:
-      "Execute a read-only CloudYali API action by id. Use search_actions first to find the id and required params. Returns { status, ok, body } from the API. Write actions (PUT/DELETE/status updates) and account / customer / user / sync / claim / registration endpoints are hard-blocked and will return an error.",
+      "Execute a read-only CloudYali API action by id. Use search_actions first to find the id and required params. Returns { status, ok, body } from the API. Every write (PUT/DELETE, status updates, savings-lifecycle transitions, assignments, anomaly feedback, alert-preference writes) and all account / customer / user / sync / claim / registration endpoints are hard-blocked and return an error.",
     inputSchema: {
       type: "object",
       properties: {

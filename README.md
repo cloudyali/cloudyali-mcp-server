@@ -17,13 +17,14 @@ Requires a CloudYali account (sign in at [console.cloudyali.io](https://console.
 
 ### 1. Get the code and build it
 
-Clone this repository and build it. Requires Node.js 20+ and git.
+The server lives in the CloudYali monorepo under `mcp-servers/cloudyali`.
+Requires Node.js 18+ and git on both platforms.
 
 **macOS / Linux**
 
 ```bash
-git clone https://github.com/cloudyali/cloudyali-mcp-server.git
-cd cloudyali-mcp-server
+git clone https://github.com/cloudyali/rajgad.git
+cd rajgad/mcp-servers/cloudyali
 npm install          # installs deps and builds dist/ via the prepare script
 ls dist/index.js && npm test   # verify the build
 ```
@@ -31,8 +32,8 @@ ls dist/index.js && npm test   # verify the build
 **Windows (PowerShell)**
 
 ```powershell
-git clone https://github.com/cloudyali/cloudyali-mcp-server.git
-cd cloudyali-mcp-server
+git clone https://github.com/cloudyali/rajgad.git
+cd rajgad\mcp-servers\cloudyali
 npm install          # installs deps and builds dist\ via the prepare script
 Test-Path dist\index.js; npm test   # verify the build
 ```
@@ -51,13 +52,13 @@ Use the **absolute path** to `dist/index.js` from step 1.
 macOS / Linux:
 
 ```bash
-claude mcp add cy -- node /path/to/cloudyali-mcp-server/dist/index.js
+claude mcp add cy -- node /path/to/rajgad/mcp-servers/cloudyali/dist/index.js
 ```
 
 Windows:
 
 ```powershell
-claude mcp add cy -- node C:\path\to\cloudyali-mcp-server\dist\index.js
+claude mcp add cy -- node C:\path\to\rajgad\mcp-servers\cloudyali\dist\index.js
 ```
 
 > **Tip:** the name you register the server under becomes the tool prefix
@@ -77,7 +78,7 @@ Run `/mcp` to confirm `cy: connected`.
   "mcpServers": {
     "cloudyali": {
       "command": "node",
-      "args": ["/path/to/cloudyali-mcp-server/dist/index.js"]
+      "args": ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
     }
   }
 }
@@ -90,7 +91,7 @@ On Windows, wrap with `cmd /c`:
   "mcpServers": {
     "cloudyali": {
       "command": "cmd",
-      "args": ["/c", "node", "C:\\path\\to\\cloudyali-mcp-server\\dist\\index.js"]
+      "args": ["/c", "node", "C:\\path\\to\\rajgad\\mcp-servers\\cloudyali\\dist\\index.js"]
     }
   }
 }
@@ -109,7 +110,7 @@ ones use a different shape:
 ```toml
 [mcp_servers.cloudyali]
 command = "node"
-args = ["/path/to/cloudyali-mcp-server/dist/index.js"]
+args = ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
 ```
 
 *VS Code* — `.vscode/mcp.json`, where the top-level key is `servers` (not
@@ -120,7 +121,7 @@ args = ["/path/to/cloudyali-mcp-server/dist/index.js"]
   "servers": {
     "cloudyali": {
       "command": "node",
-      "args": ["/path/to/cloudyali-mcp-server/dist/index.js"]
+      "args": ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
     }
   }
 }
@@ -208,73 +209,20 @@ view you have in mind.
 | `login()` | Browser-based CloudYali sign-in. |
 
 The catalog covers **Cost** (`cost.report`, `cost.aggregate`, `cost.spend`,
-`cost.filters`, `cost.filter_parameters_for_budgets`), **Budgets**
+`cost.filters`, `cost.filter_parameters_for_budgets`), **Cost-savings
+lifecycle** (`recommendations.list` — the opportunity queue with lifecycle
+filters, `recommendations.summary` — KPI funnel + projected/realized savings,
+`recommendations.get` — per-opportunity detail with runbook / why / provenance,
+and `recommendations.transition` — the one write: acknowledge / start /
+implement / ignore / un-ignore / revert), **Budgets**
 (`budgets.list`, `.summary`, `.get`, `.resources`, `.history`,
 `.config_history`, `.alert_history` — reads only; create/update/delete stay in
-the portal), **Recommendations** (`recommendations.list`, `.summary`,
-`.filter_options`, `.top_savings`, `.get`, `.history`, `.users`),
-**Anomalies** (`anomalies.list`, `.summary`, `.get`, `.preferences_get`), and
+the portal), **Anomalies** (`anomalies.list`, `.summary`, `.get`,
+`.preferences_get`), and
 **Inventory** (`inventory.list`, `.search`, `.get`, `.stats`,
 `.resource_costs`, `.history`, plus provider/type/region/account/tag lookups).
+
 Call `search_actions` first to discover the right id.
-
-### Example: how a question becomes an API call
-
-You ask: *"Which five services cost us the most this month?"*
-
-**Step 1** — the assistant discovers the right action:
-
-```json
-// search_actions
-{ "query": "top services cost report" }
-```
-
-returns `cost.report` with its parameter schema.
-
-**Step 2** — it executes the action:
-
-```json
-// execute_action
-{
-  "id": "cost.report",
-  "body": {
-    "start_time": "2026-06-01T00:00:00Z",
-    "end_time": "2026-07-01T00:00:00Z",
-    "dimensions": ["service"],
-    "top_n": 5,
-    "format": "table"
-  }
-}
-```
-
-**Step 3** — the tool returns the API response verbatim:
-
-```json
-{
-  "status": 200,
-  "ok": true,
-  "body": {
-    "columns": ["Category", "Cost", "Percentage"],
-    "rows": [
-      { "category": "Amazon EC2", "cost": 12440.11, "percentage": 38.2 },
-      { "category": "Amazon RDS", "cost": 7211.90, "percentage": 22.1 }
-    ],
-    "totals": { "monthly": 32562.55 }
-  }
-}
-```
-
-and the assistant summarizes it in plain language. Path and query parameters
-work the same way — e.g. budget alert history:
-
-```json
-// execute_action
-{
-  "id": "budgets.alert_history",
-  "path_params": { "id": 4 },
-  "query_params": { "startDate": "2026-06-01", "endDate": "2026-07-01" }
-}
-```
 
 ## Configuration
 
@@ -289,35 +237,50 @@ All optional — the defaults point at CloudYali production.
 
 Pass these via the `env` block of your MCP client config when overriding.
 
-## Read-only by construction
+## Read-only by construction, with one allowlisted write
 
-This server cannot mutate state. Three layers of enforcement:
+This server is read-only **except** for a single, explicitly allowlisted write:
+the cost-savings lifecycle transition (`recommendations.transition`), so AI
+agents can *act on* the savings model, not just query it (US-032). It appends
+audit events + ledger records — it never deletes. Enforcement layers:
 
-1. **Catalog** — write endpoints are not present in `src/catalog.ts` at all.
-2. **Method allowlist** — only `GET` and read-style `POST` actions execute;
-   `POST` entries must additionally carry `readOnly: true`.
-3. **Path denylist** — account-management, customer, user-administration, sync,
+1. **Catalog** — no mutating endpoint is present in `src/catalog.ts` except the
+   one allowlisted transition; account/customer/user/anomaly/preference writes
+   simply have no entry to invoke.
+2. **Write allowlist** — a non-`readOnly` action executes only if its id is in
+   `WRITE_ALLOWLIST` **and** it is a `POST` to a `/v1/savings/` path. Everything
+   else marked `readOnly: false` is rejected at runtime.
+3. **Method allowlist** — only `GET` and `POST` actions execute; `PUT`/`DELETE`
+   are always blocked.
+4. **Path denylist** — account-management, customer, user-administration, sync,
    marketplace, and provisioning endpoints are blocked regardless of method or
    `readOnly` flag.
 
-> **Security caveat:** the read-only restriction lives in this client. The token
-> it holds is a normal full-privilege CloudYali user token, so the read-only
-> guarantee protects against the *model* taking write actions — not against
-> anyone who can read `~/.cloudyali-mcp/credentials.json`. Protect that file like
-> a password. Make state changes (recommendation status, anomaly dismissal,
-> settings) in the portal at [console.cloudyali.io](https://console.cloudyali.io).
+> **Security caveat:** these restrictions live in this client. The token it holds
+> is a normal full-privilege CloudYali user token, so the guarantees protect
+> against the *model* taking out-of-scope actions — not against anyone who can
+> read `~/.cloudyali-mcp/credentials.json`. Protect that file like a password.
+> Make all other state changes (anomaly dismissal, settings, assignments) in the
+> portal at [console.cloudyali.io](https://console.cloudyali.io).
 
 ## Develop locally
 
-From a clone of this repo:
+From the monorepo:
 
 ```bash
-cd cloudyali-mcp-server
+cd rajgad/mcp-servers/cloudyali
 npm install        # also builds dist/ via the prepare script
-npm test           # vitest
+npm test           # vitest (catalog contract, param-shape, M9 parity)
+npm run smoke      # boot dist/index.js over stdio + MCP handshake (npx smoke)
 npm run dev        # tsc --watch
 npm run login      # exercises the live browser login against the console
 ```
+
+`npm run smoke` boots the built server exactly as `npx cloudyali-mcp` would,
+performs the MCP handshake, and asserts the cost-savings lifecycle catalog is
+reachable with zero decommissioned `/v1/recommendations` endpoints. Set
+`CLOUDYALI_API_URL` (e.g. a docker-compose stack) to also run a live
+`recommendations.list` call and confirm it hits `/v1/savings/opportunities`.
 
 `npm run login` uses the production console by default; set `PORTAL_URL` to
 override it (e.g. `PORTAL_URL=http://localhost:3000` against a local portal).

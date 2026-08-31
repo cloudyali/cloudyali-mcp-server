@@ -50,22 +50,14 @@ The exposed surface is **read-only by construction**. To add an endpoint:
 
 Maintainers publish to npm from a clean `main`:
 
-1. Bump the version and push the tag. The `npm version` step runs a hook
-   (`scripts/sync-version.mjs`) that propagates the new version into
-   `server.json`, so both stay aligned:
+```bash
+npm version <patch|minor|major>
+git push --follow-tags
+```
 
-   ```bash
-   npm version <patch|minor|major>
-   git push --follow-tags
-   ```
-
-2. Create a **GitHub Release** for the new tag (Releases → Draft a new release →
-   choose the tag → Publish). Publishing the Release is what triggers
-   `.github/workflows/publish.yml`, which builds, tests, and runs
-   `npm publish --provenance`.
-
-A pushed tag alone does **not** publish — the published GitHub Release is the
-deliberate gate (`publish.yml` runs `on: release: [published]`).
+The `npm version` step runs a hook (`scripts/sync-version.mjs`) that propagates
+the new version into `server.json`, so both stay aligned. CI publishes the
+tagged version (see `.github/workflows/publish.yml`).
 
 ## Roadmap
 
