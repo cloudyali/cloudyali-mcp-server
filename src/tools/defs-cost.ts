@@ -22,7 +22,7 @@ import {
   truncationNote,
   PROVIDERS,
 } from "./types.js";
-import { filterWarningFor } from "../filter-support.js";
+import { costWarningsFor } from "../filter-support.js";
 
 // The filter-group grammar is genuinely intricate and is documented once, as an
 // MCP resource (see src/resources.ts), rather than pasted into six descriptions.
@@ -42,7 +42,10 @@ const costTypeHint =
  * and the whole point is that the total is wrong.
  */
 function prefixWarning(args: Record<string, unknown>, text: string): string {
-  const warning = filterWarningFor(args.filters);
+  // Warnings go BEFORE the numbers, deliberately. A caveat appended after a
+  // total has already been read is a caveat about a number the reader has
+  // already believed.
+  const warning = costWarningsFor(args);
   return warning ? `${warning}\n\n${text}` : text;
 }
 

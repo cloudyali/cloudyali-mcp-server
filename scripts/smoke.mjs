@@ -1,44 +1,105 @@
 #!/usr/bin/env node
-// npx smoke test (US-032). Boots the built server exactly as `npx cloudyali-mcp`
-// would (node dist/index.js over stdio), performs the MCP initialize handshake,
-// lists tools, and drives search_actions to prove the rewritten cost-savings
-// lifecycle catalog is reachable through the real MCP protocol — not just in
-// unit tests. No backend is required for this boot/protocol smoke.
+// Boot smoke test: runs the built server exactly as `npx cloudyali-mcp` would
+// (node dist/index.js over stdio), completes the MCP handshake, and drives the
+// real protocol against a throwaway stub API.
 //
-// When a docker-compose stack is configured (CLOUDYALI_API_URL set + a token
-// available), it additionally executes recommendations.list and asserts a 2xx,
-// exercising the same /v1/savings/opportunities endpoint the UI calls (M9).
+// The point is not coverage — vitest has that. The point is that the guardrails
+// survive the whole path. Every defence in this server is a string that has to
+// reach the model through tools/call, and a unit test asserting present()
+// returns the right sentence proves nothing about whether the sentence is still
+// attached by the time it leaves the process. Twice now a control has been
+// correct in isolation and inert in practice: the login verification code went
+// to stderr, and this very script silently passed for weeks by asserting the
+// existence of tools that had been moved behind a flag.
 //
-// Usage:  npm run smoke              # boot + protocol + catalog reachability
-//         CLOUDYALI_API_URL=http://localhost:8081 npm run smoke   # + live call
+// So the assertions here are end-to-end and deliberately blunt:
+//   1. The default tool surface is the typed one, and the raw proxy is NOT on it.
+//   2. A cost call whose filter the API will silently drop carries the warning
+//      out through the protocol, ahead of the numbers.
+//   3. A resource_names filter carries the dataset-switch warning.
+//   4. The advanced escape hatch still works when explicitly enabled.
+//   5. Nothing in a tool result echoes an internal identifier.
 //
+// Usage:  npm run smoke
 // Exit code 0 = green, non-zero = failure (CI-friendly).
 
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverEntry = resolve(here, "..", "dist", "index.js");
 
-// The spawned server, tracked so every exit path (success OR failure) reaps it —
-// otherwise a failed assertion leaves `node dist/index.js` orphaned on the CI
-// runner, leaking a process + its stdin pipe on each red run.
-let serverChild = null;
-function killChild() {
-  if (serverChild && serverChild.exitCode === null && !serverChild.killed) {
-    try {
-      serverChild.kill("SIGTERM");
-    } catch {
-      /* already gone */
+const children = new Set();
+let stub = null;
+
+function cleanup() {
+  for (const c of children) {
+    if (c.exitCode === null && !c.killed) {
+      try {
+        c.kill("SIGTERM");
+      } catch {
+        /* already gone */
+      }
     }
+  }
+  children.clear();
+  if (stub) {
+    try {
+      stub.close();
+    } catch {
+      /* already closed */
+    }
+    stub = null;
   }
 }
 
 function fail(msg) {
   console.error(`SMOKE FAILED: ${msg}`);
-  killChild();
+  cleanup();
   process.exit(1);
+}
+
+function assert(cond, msg) {
+  if (!cond) fail(msg);
+}
+
+// ---------------------------------------------------------------------------
+// A stub CloudYali API.
+//
+// It answers every cost call with a body carrying an internal customer_id and a
+// database column name — the two things the hardening exists to stop. If either
+// reaches a tool result, the projection layer has regressed and the smoke is red.
+// ---------------------------------------------------------------------------
+const LEAK_MARKERS = ["customer_id", "210", "mv_cur_data_daily", "unblended_cost"];
+
+function startStubApi() {
+  return new Promise((res) => {
+    const srv = createServer((req, reply) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        reply.writeHead(200, { "content-type": "application/json" });
+        reply.end(
+          JSON.stringify({
+            customer_id: 210,
+            internal_table: "mv_cur_data_daily",
+            summary: { total: 39.78 },
+            data: [
+              { service: "AmazonEC2", cost: 39.78, unblended_cost: 39.78, customer_id: 210 },
+            ],
+            rows: [{ service: "AmazonEC2", cost: 39.78 }],
+            resources: [
+              { resource_id: "vol-0abc", has_cost_data: true, total_cost: 39.78, match_confidence: "high", customer_id: 210 },
+              { resource_id: "gke-x", has_cost_data: true, total_cost: 4.92, match_confidence: "low", match_method: "labels", internal_table: "mv_cur_data_daily" },
+            ],
+          }),
+        );
+      });
+    });
+    srv.listen(0, "127.0.0.1", () => res({ srv, port: srv.address().port }));
+  });
 }
 
 // Minimal stdio JSON-RPC client: writes newline-delimited requests, resolves
@@ -81,67 +142,152 @@ function newClient(child) {
   return { call };
 }
 
-async function main() {
+async function boot(env) {
   const child = spawn(process.execPath, [serverEntry], {
     stdio: ["pipe", "pipe", "inherit"],
-    env: process.env,
+    env: { ...process.env, ...env },
   });
-  serverChild = child;
+  children.add(child);
   child.on("error", (e) => fail(`could not spawn server: ${e.message}`));
 
   const client = newClient(child);
-
   const init = await client.call("initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
     clientInfo: { name: "smoke", version: "0.0.0" },
   });
-  if (!init.result || init.result.serverInfo?.name !== "cloudyali") {
-    fail(`unexpected initialize result: ${JSON.stringify(init)}`);
-  }
+  assert(init.result?.serverInfo?.name === "cloudyali", `unexpected initialize result: ${JSON.stringify(init)}`);
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+  return { child, client };
+}
 
+const textOf = (r) => r.result?.content?.map((c) => c.text).join("\n") ?? "";
+
+/** One AWS filter group, plus whatever extra conditions the case needs. */
+const awsFilter = (extra) => [
+  { operator: "AND", cloud_providers: [{ operator: "equals", value: ["AWS"] }], ...extra },
+];
+
+async function main() {
+  const { srv, port } = await startStubApi();
+  stub = srv;
+  const apiEnv = {
+    CLOUDYALI_API_URL: `http://127.0.0.1:${port}`,
+    CLOUDYALI_JWT: "smoke-token",
+    // A permissive bucket: the throttle is unit-tested on a virtual clock, and
+    // making the smoke wait on real seconds only buys flakiness.
+    CLOUDYALI_MCP_RATE_PER_MINUTE: "6000",
+    CLOUDYALI_MCP_BURST: "100",
+  };
+
+  // -- 1. The default surface is the typed one -------------------------------
+  const { client } = await boot(apiEnv);
   const tools = await client.call("tools/list", {});
-  const toolNames = (tools.result?.tools ?? []).map((t) => t.name);
-  for (const t of ["search_actions", "execute_action"]) {
-    if (!toolNames.includes(t)) fail(`tool ${t} missing from tools/list: ${toolNames.join(", ")}`);
+  const names = (tools.result?.tools ?? []).map((t) => t.name);
+
+  for (const t of ["query_costs", "get_cost_breakdown", "list_budgets", "get_resource_costs", "login"]) {
+    assert(names.includes(t), `typed tool ${t} missing from tools/list: ${names.join(", ")}`);
+  }
+  for (const t of ["search_actions", "execute_action", "list_categories"]) {
+    assert(!names.includes(t), `raw proxy tool ${t} is advertised by default — it must be behind CLOUDYALI_MCP_ADVANCED`);
   }
 
-  // Catalog reachability: search the rewritten savings surface via the protocol.
-  const search = await client.call("tools/call", {
+  // -- 2. A silently-dropped filter warns, ahead of the numbers --------------
+  const dropped = await client.call("tools/call", {
+    name: "query_costs",
+    arguments: {
+      start_time: "2026-08-01T00:00:00Z",
+      end_time: "2026-08-31T00:00:00Z",
+      filters: awsFilter({ usage_types: [{ operator: "equals", value: ["VolumeUsage.gp3"] }] }),
+    },
+  });
+  const droppedText = textOf(dropped);
+  assert(/does not support filtering by usage_types/i.test(droppedText), `no dropped-filter warning: ${droppedText.slice(0, 300)}`);
+  assert(
+    droppedText.indexOf("WARNING") < droppedText.indexOf("39.78") || !droppedText.includes("39.78"),
+    "the warning arrived after the total — a caveat read after the number is a caveat about a number already believed",
+  );
+
+  // -- 3. A resource_names filter warns about the dataset switch -------------
+  const switched = await client.call("tools/call", {
+    name: "query_costs",
+    arguments: {
+      start_time: "2026-08-01T00:00:00Z",
+      end_time: "2026-08-31T00:00:00Z",
+      filters: awsFilter({ resource_names: [{ operator: "equals", value: ["vol-0abc"] }] }),
+      group_by_dimensions: ["usage_type"],
+    },
+  });
+  const switchedText = textOf(switched);
+  assert(/different dataset/i.test(switchedText), `no dataset-switch warning: ${switchedText.slice(0, 300)}`);
+  assert(/zero spend/i.test(switchedText), "dataset-switch warning does not say an empty result is not zero spend");
+  assert(/Unknown/.test(switchedText), "usage_type grouping under a resource filter did not warn that it collapses");
+
+  // -- 4. Nothing echoes an internal identifier -----------------------------
+  //
+  // The WHOLE result, not just the prose: structuredContent is model context
+  // too, and it is the half the projection layer exists to police. The stub
+  // returns customer_id 210 and a matview name in every body, so a regression
+  // in shapes.ts turns this red rather than shipping the screenshot that
+  // started all of this.
+  //
+  // get_resource_costs is the load-bearing case: its present() returns the
+  // shaped body wholesale, so it is the one tool where a regression in the
+  // projection layer surfaces directly as tenant data in structuredContent.
+  // (query_costs happens to rebuild its structured output from named fields, so
+  // it would stay clean even with the projection torn out — a comforting green
+  // that proves nothing. Checked by mutation, not by reading.)
+  const priced = await client.call("tools/call", {
+    name: "get_resource_costs",
+    arguments: { resource_ids: ["vol-0abc", "gke-x"] },
+  });
+  const pricedText = textOf(priced);
+  assert(/low confidence/i.test(pricedText), `get_resource_costs did not flag the low-confidence match: ${pricedText.slice(0, 300)}`);
+  assert(/estimate/i.test(pricedText), "a label-inferred cost was not called an estimate");
+  assert(/refreshed separately/i.test(pricedText), "get_resource_costs did not warn that its dataset differs from query_costs");
+
+  for (const [label, res] of [["dropped-filter call", dropped], ["dataset-switch call", switched], ["resource-costs call", priced]]) {
+    const whole = JSON.stringify(res.result ?? {});
+    for (const marker of LEAK_MARKERS) {
+      assert(!whole.includes(marker), `${label} leaked "${marker}" from the API body into the tool result`);
+    }
+  }
+
+  // -- 5. A clean query says nothing --------------------------------------
+  const clean = await client.call("tools/call", {
+    name: "query_costs",
+    arguments: {
+      start_time: "2026-08-01T00:00:00Z",
+      end_time: "2026-08-31T00:00:00Z",
+      filters: awsFilter({ services: [{ operator: "equals", value: ["AmazonEC2"] }] }),
+    },
+  });
+  assert(!/WARNING/.test(textOf(clean)), "a clean query emitted a warning — a warning on every call is one nobody reads");
+
+  console.log("smoke: typed surface served, proxy hidden, filter + dataset warnings reach the model, no body leak");
+
+  // -- 6. The advanced hatch still opens ------------------------------------
+  const adv = await boot({ ...apiEnv, CLOUDYALI_MCP_ADVANCED: "1" });
+  const advTools = await adv.client.call("tools/list", {});
+  const advNames = (advTools.result?.tools ?? []).map((t) => t.name);
+  for (const t of ["search_actions", "execute_action"]) {
+    assert(advNames.includes(t), `CLOUDYALI_MCP_ADVANCED=1 did not restore ${t}`);
+  }
+  const search = await adv.client.call("tools/call", {
     name: "search_actions",
     arguments: { query: "cost savings opportunities lifecycle", category: "recommendations" },
   });
-  const text = search.result?.content?.map((c) => c.text).join("\n") ?? "";
+  const searchText = textOf(search);
   for (const id of ["recommendations.list", "recommendations.summary", "recommendations.get"]) {
-    if (!text.includes(id)) fail(`search_actions did not surface ${id}`);
+    assert(searchText.includes(id), `search_actions did not surface ${id}`);
   }
-  if (/\/v1\/recommendations(\/|"|$)/.test(text)) {
-    fail("search_actions surfaced a decommissioned /v1/recommendations endpoint");
-  }
-  if (text.includes("recommendations.transition")) {
-    fail("search_actions surfaced the withdrawn savings write action");
-  }
-  console.log("smoke: server boots, MCP handshake OK, savings read catalog reachable");
+  assert(!/\/v1\/recommendations(\/|"|$)/.test(searchText), "search_actions surfaced a decommissioned /v1/recommendations endpoint");
+  assert(!searchText.includes("recommendations.transition"), "search_actions surfaced the withdrawn savings write action");
 
-  // Optional live parity: only when a stack is configured.
-  if (process.env.CLOUDYALI_API_URL) {
-    const exec = await client.call("tools/call", {
-      name: "execute_action",
-      arguments: { id: "recommendations.list", query_params: { limit: 1 } },
-    });
-    const body = exec.result?.content?.map((c) => c.text).join("\n") ?? "";
-    if (/"action_id":\s*"recommendations.list"/.test(body) && /"path":\s*"\/v1\/savings\/opportunities/.test(body)) {
-      console.log("smoke: live execute_action hit /v1/savings/opportunities (M9 endpoint parity)");
-    } else {
-      fail(`live execute_action did not hit the savings endpoint: ${body.slice(0, 400)}`);
-    }
-  } else {
-    console.log("smoke: CLOUDYALI_API_URL not set — skipped live stack call (boot/protocol smoke only)");
-  }
+  console.log("smoke: advanced catalog reachable when explicitly enabled");
 
-  killChild();
+  cleanup();
   process.exit(0);
 }
 
-main().catch((e) => fail(e.message));
+main().catch((e) => fail(e.stack ?? e.message));

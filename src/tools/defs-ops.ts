@@ -210,15 +210,37 @@ export const INVENTORY_TOOLS: ToolDef[] = [
     ),
     call: (a) => ({ action: "inventory.resource_costs", body: a }),
     present: (body) => {
-      const rows = rowsOf(body, "resources");
-      const withData = rows.filter(
-        (r) => (r as Record<string, unknown>)?.has_cost_data === true,
-      ).length;
+      const rows = rowsOf(body, "resources") as Record<string, unknown>[];
+      const withData = rows.filter((r) => r?.has_cost_data === true).length;
+      if (rows.length === 0) return { structured: (body ?? {}) as Record<string, unknown>, text: "No cost data returned for those resource IDs." };
+
+      // match_confidence is the API telling us how the resource was joined to a
+      // billing row, and it is not a formality. "high" means the billing record
+      // carried the resource's own identifier. "medium" means GCP fell back to
+      // matching on the short resource name — two resources with the same name
+      // in different projects are indistinguishable. "low" means the cost was
+      // attributed from GKE/Dataproc/Dataflow labels on the *underlying* Compute
+      // Engine resources, which is an inference, not a billed line item.
+      //
+      // The number reads identically in all three cases. Left in structured
+      // output alone it goes unread, and a labelled guess gets reported as a
+      // charge — so the weakest match in the batch is named in the prose.
+      const soft = rows.filter((r) => r.match_confidence === "medium" || r.match_confidence === "low");
+      const lowest = soft.some((r) => r.match_confidence === "low") ? "low" : "medium";
+      const caveat =
+        soft.length === 0
+          ? ""
+          : ` ${soft.length} of them matched at ${lowest} confidence (match_method on each row says how): ` +
+            (lowest === "low"
+              ? `costs were attributed from labels on underlying Compute Engine resources rather than billed against the resource itself. Treat those as estimates and say so.`
+              : `the join was made on resource name rather than the billing identifier, so a same-named resource in another project could be included. Say the figure is approximate.`);
+
       return {
         structured: (body ?? {}) as Record<string, unknown>,
-        text: rows.length
-          ? `Priced ${rows.length} resource(s); ${withData} had attributable cost. A resource with no cost data is normal — not every resource type is billed individually.`
-          : "No cost data returned for those resource IDs.",
+        text:
+          `Priced ${rows.length} resource(s); ${withData} had attributable cost. A resource with no cost data is normal — not every resource type is billed individually.` +
+          caveat +
+          ` These figures come from the per-resource billing dataset, which is refreshed separately from the aggregate one used by query_costs and get_cost_breakdown; a total built here will not necessarily match a total built there.`,
       };
     },
   },

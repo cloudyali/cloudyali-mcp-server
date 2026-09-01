@@ -173,6 +173,61 @@ describe("empty results are directed, not just zero", () => {
     expect(out.text).toMatch(/does not record configuration history/i);
   });
 
+  it("get_resource_costs names a low-confidence match instead of burying it", () => {
+    // A GKE cluster's cost is inferred from labels on the underlying Compute
+    // Engine VMs. The number looks identical to a billed charge, and left in
+    // structuredContent alone the flag goes unread — so the estimate gets
+    // reported as a bill.
+    const t = TOOL_DEFS.find((d) => d.name === "get_resource_costs")!;
+    const out = t.present!(
+      {
+        resources: [
+          { resource_id: "a", has_cost_data: true, total_cost: 10, match_confidence: "high" },
+          { resource_id: "b", has_cost_data: true, total_cost: 20, match_confidence: "low" },
+        ],
+      },
+      ARGS.get_resource_costs,
+    );
+    expect(out.text).toMatch(/low confidence/i);
+    expect(out.text).toMatch(/labels/i);
+    expect(out.text).toMatch(/estimate/i);
+  });
+
+  it("get_resource_costs reports the weakest match in the batch, not the best", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "get_resource_costs")!;
+    const medium = t.present!(
+      {
+        resources: [
+          { resource_id: "a", has_cost_data: true, match_confidence: "high" },
+          { resource_id: "b", has_cost_data: true, match_confidence: "medium" },
+        ],
+      },
+      ARGS.get_resource_costs,
+    );
+    expect(medium.text).toMatch(/medium confidence/i);
+    expect(medium.text).toMatch(/resource name/i);
+    expect(medium.text).not.toMatch(/low confidence/i);
+  });
+
+  it("get_resource_costs stays quiet when every match was made on the billing id", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "get_resource_costs")!;
+    const out = t.present!(
+      { resources: [{ resource_id: "a", has_cost_data: true, match_confidence: "high" }] },
+      ARGS.get_resource_costs,
+    );
+    expect(out.text).not.toMatch(/confidence/i);
+  });
+
+  it("get_resource_costs warns that its totals are a different dataset from query_costs", () => {
+    // The reconciliation trap: per-resource costs and aggregate costs read
+    // separately-refreshed materialized views. Summing here and comparing there
+    // produces a gap that invites an invented explanation.
+    const t = TOOL_DEFS.find((d) => d.name === "get_resource_costs")!;
+    const out = t.present!({ resources: [{ resource_id: "a", has_cost_data: true }] }, ARGS.get_resource_costs);
+    expect(out.text).toMatch(/refreshed separately/i);
+    expect(out.text).toMatch(/query_costs/);
+  });
+
   it("get_resource_costs distinguishes 'no data' from 'no such resource'", () => {
     const t = TOOL_DEFS.find((d) => d.name === "get_resource_costs")!;
     const out = t.present!(

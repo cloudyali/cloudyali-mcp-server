@@ -37,4 +37,25 @@ describe("MCP resources", () => {
     expect(text).toMatch(/silently ignored/i);
     expect(text).toMatch(/equal.*not.*equals/is);
   });
+
+  it("documents the dataset switch, including that empty is not zero", () => {
+    // The tools warn at call time, but a model planning a reconciliation reads
+    // this first. Both need to say it; the warning alone arrives too late to
+    // change the plan.
+    const text = readResource("cloudyali://filters").text;
+    expect(text).toMatch(/resource_names.*different materialized view/is);
+    expect(text).toMatch(/not evidence of zero spend/i);
+    expect(text).toMatch(/billing lag/i);
+    expect(text).toMatch(/match_confidence/);
+  });
+
+  it("keeps the per-provider drop table and the dataset section consistent", () => {
+    // Azure appears in both, saying opposite things: its usage_types filter
+    // works, but its resource_types filter is dropped. If a future edit blurs
+    // that into "Azure is fine" or "Azure is broken", the doc stops matching
+    // filter-support.ts and the tools start contradicting the reference.
+    const text = readResource("cloudyali://filters").text;
+    expect(text).toMatch(/Azure.*meter_subcategory.*unaffected/is);
+    expect(text).toMatch(/\| Azure \| `resource_types` \|/);
+  });
 });

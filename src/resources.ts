@@ -73,6 +73,48 @@ have to hold the table in mind. When you see that warning, either narrow the
 returned rows yourself or move the dimension into \`group_by_dimensions\` and sum
 the groups you want — do not report the raw total as filtered.
 
+## \`resource_names\` silently changes which dataset answers
+
+For AWS, GCP and Azure, adding a \`resource_names\` condition does not just narrow
+the query — it re-points it at a **different materialized view**: the per-resource
+billing view instead of the aggregate one. The base view has no resource column,
+so there is nowhere else for the filter to go.
+
+Both views are built from the same source table, but they are not the same data:
+
+- **Different retention.** The AWS aggregate view keeps everything from the start
+  of the month seven months back; the per-resource view keeps seven months to the
+  day. Each window is fixed at the moment that view was last refreshed, and the
+  two are refreshed by separate jobs that can fail independently. A month can
+  therefore be fully populated in one and empty in the other.
+- **No usage type.** The AWS and GCP per-resource views drop \`usage_type\` /
+  \`sku_id\`. Grouping by usage type in this mode does not error — every row
+  collapses into a single \`Unknown\` bucket. (Azure's per-resource view keeps
+  \`meter_subcategory\`, so Azure is unaffected.)
+- **Silent provider drop.** If the per-resource view has never been refreshed, the
+  provider is omitted from the report entirely: HTTP 200, no rows, no mention.
+  **An empty result is not evidence of zero spend.**
+
+So the same question asked two ways returns two different numbers, and nothing in
+the response says which view produced either. The cost tools detect the switch and
+warn. When you see that warning:
+
+- report the figure as a per-resource one, not as the same measurement as an
+  unfiltered total;
+- if it disagrees with an unfiltered total, **do not explain the gap as billing lag
+  or as a partial month** — the cause is the dataset, and saying otherwise invents
+  a reconciliation that does not exist;
+- do not fall back to grouping by usage type on AWS or GCP, because that grouping
+  is one of the things this mode breaks.
+
+\`get_resource_costs\` reads the per-resource dataset too, and carries the same
+caveat against \`query_costs\` and \`get_cost_breakdown\` totals. It also returns a
+\`match_confidence\` per resource: \`high\` means the billing row carried the
+resource's own identifier, \`medium\` means the join was made on resource name
+(a same-named resource elsewhere may be included), and \`low\` means the cost was
+inferred from labels on underlying Compute Engine resources. Only \`high\` should
+be reported as a billed figure.
+
 ## Failure mode worth knowing
 
 Unknown keys and unknown operators are **silently ignored** server-side. A filter

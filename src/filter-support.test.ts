@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { UNSUPPORTED_FILTERS, filterWarningFor, findIgnoredFilters } from "./filter-support.js";
+import {
+  UNSUPPORTED_FILTERS,
+  costWarningsFor,
+  datasetSwitchWarning,
+  filterWarningFor,
+  findDatasetSwitch,
+  findIgnoredFilters,
+} from "./filter-support.js";
 
 function group(provider: string, extra: Record<string, unknown> = {}) {
   return {
@@ -103,6 +110,156 @@ describe("the matrix matches the backend column mappings", () => {
     for (const [p, dims] of Object.entries(UNSUPPORTED_FILTERS)) {
       if (p === "aws") expect(dims).not.toContain("resource_types");
       else expect(dims, p).toContain("resource_types");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The dataset switch
+// ---------------------------------------------------------------------------
+
+describe("a resource_names filter changes which dataset answers", () => {
+  const awsGroup = (extra: Record<string, unknown> = {}) => [
+    {
+      operator: "AND",
+      cloud_providers: [{ operator: "equals", value: ["AWS"] }],
+      ...extra,
+    },
+  ];
+
+  it("detects the switch for AWS, GCP and Azure", () => {
+    for (const provider of ["AWS", "GCP", "Azure"]) {
+      const found = findDatasetSwitch([
+        {
+          operator: "AND",
+          cloud_providers: [{ operator: "equals", value: [provider] }],
+          resource_names: [{ operator: "equals", value: ["vol-1"] }],
+        },
+      ]);
+      expect(found.map((f) => f.provider), provider).toEqual([provider.toLowerCase()]);
+    }
+  });
+
+  it("leaves providers with no per-resource view alone", () => {
+    // Databricks and the SaaS providers have one billing table each; there is no
+    // second dataset to switch to, so no warning is owed.
+    for (const provider of ["Databricks", "Fastly", "OpenAI", "Anthropic"]) {
+      const found = findDatasetSwitch([
+        {
+          operator: "AND",
+          cloud_providers: [{ operator: "equals", value: [provider] }],
+          resource_names: [{ operator: "equals", value: ["x"] }],
+        },
+      ]);
+      expect(found, provider).toEqual([]);
+    }
+  });
+
+  it("stays quiet when there is no resource_names condition", () => {
+    expect(findDatasetSwitch(awsGroup({ services: [{ operator: "equals", value: ["AmazonEC2"] }] }))).toEqual([]);
+    expect(findDatasetSwitch(awsGroup({ resource_names: [] }))).toEqual([]);
+  });
+
+  it("does not fire on resource_arns, which the backend does not route on", () => {
+    // hasResourceNamesFilterForProvider inspects ResourceNames only. Warning on
+    // resource_arns would be a warning about something that did not happen —
+    // and a warning that cries wolf is one the model learns to skip past.
+    expect(findDatasetSwitch(awsGroup({ resource_arns: [{ operator: "equals", value: ["arn:aws:ec2:::vol/vol-1"] }] }))).toEqual([]);
+  });
+
+  it("names the provider and refuses the billing-lag explanation", () => {
+    const text = datasetSwitchWarning(findDatasetSwitch(awsGroup({ resource_names: [{ operator: "equals", value: ["vol-1"] }] })));
+    expect(text).toMatch(/AWS/);
+    expect(text).toMatch(/different dataset/i);
+    expect(text).toMatch(/not.*reconcile/i);
+    expect(text).toMatch(/billing lag/i);
+  });
+
+  it("says an empty result is not evidence of zero spend", () => {
+    // The provider-skip path returns 200 with no rows. Without this line the
+    // most likely reading of an empty response is "you spent nothing".
+    const text = datasetSwitchWarning([{ provider: "aws", losesUsageType: true }]);
+    expect(text).toMatch(/not evidence of zero spend|not.*zero spend/i);
+  });
+
+  it("warns that usage_type grouping collapses, but only when it is asked for", () => {
+    const switched = [{ provider: "aws", losesUsageType: true }];
+    expect(datasetSwitchWarning(switched, ["usage_type"])).toMatch(/Unknown/);
+    expect(datasetSwitchWarning(switched, ["service"])).not.toMatch(/Unknown/);
+    expect(datasetSwitchWarning(switched)).not.toMatch(/Unknown/);
+  });
+
+  it("does not claim Azure loses its usage type, because it does not", () => {
+    // mv_azure_billing_data_resources keeps meter_subcategory. This asymmetry is
+    // exactly what a user observed in the field, and getting it wrong here would
+    // make the server contradict the API it is describing.
+    const azure = [{ provider: "azure", losesUsageType: false }];
+    expect(datasetSwitchWarning(azure, ["usage_type"])).not.toMatch(/Unknown/);
+  });
+});
+
+describe("costWarningsFor composes the two warnings without contradicting itself", () => {
+  const awsResourceFiltered = {
+    filters: [
+      {
+        operator: "AND",
+        cloud_providers: [{ operator: "equals", value: ["AWS"] }],
+        resource_names: [{ operator: "equals", value: ["vol-1"] }],
+        usage_types: [{ operator: "equals", value: ["VolumeUsage.gp3"] }],
+      },
+    ],
+  };
+
+  it("withdraws the group_by remedy when the dataset switch has broken it", () => {
+    // The dropped-filter warning normally says "or add the dimension to group_by
+    // and sum". Under a resource_names filter that dimension does not exist in
+    // the view being read, so the advice would produce a second wrong answer.
+    const text = costWarningsFor(awsResourceFiltered);
+    expect(text).toMatch(/does not support filtering by usage_types/);
+    expect(text).toMatch(/different dataset/i);
+    expect(text).not.toMatch(/add the dimension to group_by/);
+    expect(text).toMatch(/Narrow client-side/);
+  });
+
+  it("keeps the group_by remedy when only the filter was dropped", () => {
+    const text = costWarningsFor({
+      filters: [
+        {
+          operator: "AND",
+          cloud_providers: [{ operator: "equals", value: ["AWS"] }],
+          usage_types: [{ operator: "equals", value: ["VolumeUsage.gp3"] }],
+        },
+      ],
+    });
+    expect(text).toMatch(/add the dimension to group_by/);
+    expect(text).not.toMatch(/different dataset/i);
+  });
+
+  it("reads the grouping argument under either of its two names", () => {
+    const filters = awsResourceFiltered.filters;
+    expect(costWarningsFor({ filters, group_by_dimensions: ["usage_type"] })).toMatch(/Unknown/);
+    expect(costWarningsFor({ filters, dimensions: ["usage_type"] })).toMatch(/Unknown/);
+  });
+
+  it("stays silent on a clean query, and on no arguments at all", () => {
+    expect(costWarningsFor({})).toBe("");
+    expect(costWarningsFor(undefined)).toBe("");
+    expect(
+      costWarningsFor({
+        filters: [
+          {
+            operator: "AND",
+            cloud_providers: [{ operator: "equals", value: ["AWS"] }],
+            services: [{ operator: "equals", value: ["AmazonEC2"] }],
+          },
+        ],
+      }),
+    ).toBe("");
+  });
+
+  it("survives junk in the filters argument", () => {
+    for (const junk of [null, 42, "filters", [null], [{}], [{ cloud_providers: "AWS" }], {}]) {
+      expect(() => costWarningsFor({ filters: junk }), JSON.stringify(junk)).not.toThrow();
     }
   });
 });
