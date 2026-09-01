@@ -253,15 +253,47 @@ const MAX_ERROR_FIELD_LEN = 300;
 // Error-contract fields a client legitimately needs: the svcerror shape
 // {code, message, details} plus the savings transition-result fields
 // (error/current_status/allowed_transitions/missing) that drive retry UX.
+// `details` is deliberately absent. pkg/svcerror puts the raw Go error there —
+// `errorResponse.Error()` verbatim — so it is the channel that carries pgx and
+// pq messages, SQLSTATE codes and column names straight into model context. A
+// real report: order_by:"cost" produced `column "cost" does not exist`, which
+// is schema disclosure dressed up as a helpful error. `message` is the API's
+// intentional, authored text and stays.
 const ERROR_FIELD_ALLOWLIST = [
   "code",
   "message",
-  "details",
   "error",
   "current_status",
   "allowed_transitions",
   "missing",
 ] as const;
+
+// Field-level dropping is necessary but not sufficient: an upstream `message`
+// can carry the same content if someone wraps a driver error into one. These
+// patterns are checked on every error string that survives the allowlist, and a
+// match replaces the whole string rather than redacting part of it — a partial
+// redaction leaves you guessing which part was the sensitive half.
+const LEAKY_ERROR_PATTERNS: RegExp[] = [
+  /\bcolumn\s+"[^"]+"\s+does not exist/i,
+  /\brelation\s+"[^"]+"\s+does not exist/i,
+  /\bSQLSTATE\b/i,
+  /^\s*(pq|pgx|sql):/i,
+  /\b(SELECT|INSERT|UPDATE|DELETE)\b[^"]{0,80}\bFROM\b/i,
+  /goroutine \d+ \[/,
+  /\.go:\d+/,
+  /\b(dial tcp|connection refused|no such host)\b/i,
+  /\b[\w-]+\.(internal|local|svc\.cluster\.local)\b/i,
+  /(postgres(ql)?|redis|amqp):\/\//i,
+];
+
+export function scrubErrorText(text: string): string {
+  for (const re of LEAKY_ERROR_PATTERNS) {
+    if (re.test(text)) {
+      return "The CloudYali API rejected this request. Check the arguments against the tool schema; if they look right, the endpoint may not support this combination.";
+    }
+  }
+  return text;
+}
 
 // trimErrorBody reduces a non-2xx backend body to the allowlisted error-contract
 // fields (review note, GA/public build): anything else — stack traces, driver
@@ -276,7 +308,7 @@ export function trimErrorBody(parsed: unknown): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const key of ERROR_FIELD_ALLOWLIST) {
       const v = src[key];
-      if (typeof v === "string" && v.length > 0) out[key] = cap(v);
+      if (typeof v === "string" && v.length > 0) out[key] = cap(scrubErrorText(v));
       else if (typeof v === "number") out[key] = v;
       else if (Array.isArray(v) && v.every((e) => typeof e === "string")) out[key] = v;
     }
@@ -284,7 +316,7 @@ export function trimErrorBody(parsed: unknown): Record<string, unknown> {
     return out;
   }
   if (typeof parsed === "string" && parsed.trim().length > 0) {
-    return { error: cap(parsed.trim()) };
+    return { error: cap(scrubErrorText(parsed.trim())) };
   }
   return { error: "request failed" };
 }

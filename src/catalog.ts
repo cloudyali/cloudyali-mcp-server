@@ -125,7 +125,12 @@ export const CATALOG: Action[] = [
         description: "Up to 4 dimensions: account, region, service, cloud_provider, cost_type, usage_type.",
       },
       group_by_hierarchy: { type: "boolean", description: "Build parent/child hierarchy across dimensions." },
-      order_by: { type: "string", description: "Sort column." },
+      order_by: {
+        type: "string",
+        enum: ["amount", "account", "region", "service", "cloud_provider", "cost_type", "usage_type", "timestamp"],
+        description:
+          "Sort column, matching a selected alias. The cost column is `amount` — `cost` does not exist and fails the query. The backend validates only that the value is a bare SQL identifier before interpolating it into ORDER BY, so an unknown-but-well-formed name reaches Postgres and 500s.",
+      },
       order_desc: { type: "boolean", description: "Sort descending." },
       count: { type: "integer", description: "Limit number of rows." },
       count_offset: { type: "integer", description: "Pagination offset." },

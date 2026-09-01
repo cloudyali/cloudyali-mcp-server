@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./login.js", async () => {
+  const actual = await vi.importActual<typeof import("./login.js")>("./login.js");
+  return { ...actual, startLogin: vi.fn(), currentLogin: vi.fn(), clearLogin: vi.fn() };
+});
+
 vi.mock("./execute.js", async () => {
   const actual = await vi.importActual<typeof import("./execute.js")>("./execute.js");
   return { ...actual, executeAction: vi.fn(), executeActionRaw: vi.fn() };
@@ -8,10 +13,14 @@ vi.mock("./execute.js", async () => {
 import { ADVANCED_ENABLED, TOOLS, handleToolCall } from "./handlers.js";
 import { TOOL_DEFS } from "./tools/index.js";
 import { executeAction, executeActionRaw } from "./execute.js";
+import { clearLogin, currentLogin, startLogin } from "./login.js";
 import { AuthError } from "./auth.js";
 
 const mockExecute = vi.mocked(executeAction);
 const mockExecuteRaw = vi.mocked(executeActionRaw);
+const mockStart = vi.mocked(startLogin);
+const mockCurrent = vi.mocked(currentLogin);
+const mockClear = vi.mocked(clearLogin);
 
 function textOf(res: Awaited<ReturnType<typeof handleToolCall>>): string {
   const first = res.content?.[0];
@@ -122,5 +131,80 @@ describe("dispatch", () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toBe("Error: upstream exploded");
     expect(textOf(res)).not.toMatch(/\.ts:\d+/);
+  });
+});
+
+describe("login is two-phase, so the verification code reaches the user first", () => {
+  const session = {
+    code: "9E44-1E86",
+    portalUrl: "https://console.example.com/cli-login?state=abc&code=9E44-1E86",
+    startedAt: 0,
+    expiresAt: Date.now() + 60_000,
+    status: "pending" as const,
+    done: Promise.resolve({} as never),
+    cancel: () => {},
+  };
+
+  beforeEach(() => {
+    mockStart.mockReset();
+    mockCurrent.mockReset();
+    mockClear.mockReset();
+  });
+
+  it("returns the code on the first call, before the user is asked to trust the page", async () => {
+    // This is the whole point of the change. The code defends against a rogue
+    // local process opening the browser with its own redirect_uri; it only
+    // works if the user can compare before clicking Authorize. A blocking call
+    // returned after that decision, and stderr is a log file under an MCP
+    // client, not something anyone reads.
+    mockCurrent.mockReturnValue(null);
+    mockStart.mockResolvedValue({ ...session, done: new Promise(() => {}) } as never);
+
+    const res = await handleToolCall("login", {});
+    expect(res.isError).toBeFalsy();
+    expect(textOf(res)).toContain("9E44-1E86");
+    expect(textOf(res)).toMatch(/before clicking Authorize/i);
+    expect(textOf(res)).toContain(session.portalUrl);
+  });
+
+  it("tells the user what a code mismatch means", async () => {
+    mockCurrent.mockReturnValue(null);
+    mockStart.mockResolvedValue({ ...session, done: new Promise(() => {}) } as never);
+    expect(textOf(await handleToolCall("login", {}))).toMatch(/did not come from this tool/i);
+  });
+
+  it("repeats the code while still waiting, instead of leaving the user guessing", async () => {
+    mockCurrent.mockReturnValue({ ...session, done: new Promise(() => {}) } as never);
+    const res = await handleToolCall("login", {});
+    expect(textOf(res)).toContain("9E44-1E86");
+    expect(textOf(res)).toMatch(/Still waiting/i);
+  });
+
+  it("reports success once the browser flow completes", async () => {
+    mockCurrent.mockReturnValue({
+      ...session,
+      status: "done",
+      credentials: { email: "user@example.com", accessToken: "a", refreshToken: "r", expiresAt: 1767225600, savedAt: 0 },
+    } as never);
+    const res = await handleToolCall("login", {});
+    expect(textOf(res)).toContain("user@example.com");
+    expect(textOf(res)).toMatch(/\bUTC\b/);
+    expect(mockClear).toHaveBeenCalled();
+  });
+
+  it("surfaces a failure and invites a retry rather than dead-ending", async () => {
+    mockCurrent.mockReturnValue({ ...session, status: "failed", error: new Error("state mismatch") } as never);
+    const res = await handleToolCall("login", {});
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/state mismatch/);
+    expect(textOf(res)).toMatch(/Call login again/i);
+  });
+
+  it("does not block for minutes waiting on the browser", async () => {
+    mockCurrent.mockReturnValue(null);
+    mockStart.mockResolvedValue({ ...session, done: new Promise(() => {}) } as never);
+    const t0 = Date.now();
+    await handleToolCall("login", {});
+    expect(Date.now() - t0).toBeLessThan(1000);
   });
 });

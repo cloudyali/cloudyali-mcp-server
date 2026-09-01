@@ -7,6 +7,8 @@ import {
   assertPortalReachable,
   awaitLogin,
   callbackHtml,
+  clearLogin,
+  formatExpiry,
   loginSuccessMessage,
   readJsonBody,
   verificationCodeFromState,
@@ -41,10 +43,31 @@ function reqFrom(body: string): IncomingMessage {
 }
 
 describe("loginSuccessMessage", () => {
-  it("includes the email and the ISO expiry", () => {
+  it("includes the email and the expiry in both UTC and local time", () => {
     const msg = loginSuccessMessage(creds);
     expect(msg).toContain("user@example.com");
-    expect(msg).toContain("2026-01-01T00:00:00.000Z");
+    // UTC alone forces the reader to do offset arithmetic to answer "do I need
+    // to act soon"; local alone is ambiguous when the transcript is read from
+    // somewhere else. Both, with the zone named.
+    expect(msg).toMatch(/\bUTC\b/);
+    expect(msg).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  });
+
+  it("collapses the repeated date when UTC and local fall on the same day", () => {
+    // 09:10 UTC is 14:40 in Asia/Calcutta — same calendar day, so the date
+    // should appear once, not twice.
+    const msg = formatExpiry(Math.floor(Date.parse("2026-09-01T09:10:00Z") / 1000));
+    expect(msg).toMatch(/UTC \(\d{2}:\d{2} /);
+  });
+
+  it("keeps both dates when local time rolls into the next day", () => {
+    const msg = formatExpiry(Math.floor(Date.parse("2026-09-01T20:10:00Z") / 1000));
+    const dates = msg.match(/\d{2} \w+ 2026/g) ?? [];
+    expect(dates.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("degrades to words rather than 'Invalid Date' on a nonsense timestamp", () => {
+    expect(formatExpiry(Number.NaN)).toBe("an unknown time");
   });
 
   it("falls back to a placeholder when email is missing", () => {
@@ -127,9 +150,13 @@ describe("awaitLogin (browser callback server)", () => {
     store.nowEpochSeconds.mockReturnValue(1000);
     // assertPortalReachable() must pass so awaitLogin proceeds to bind the server.
     global.fetch = vi.fn().mockResolvedValue({ status: 200 }) as unknown as typeof fetch;
+    // startLogin is idempotent by design — a pending session is returned rather
+    // than starting a second listener. Good for the tool, bad for test isolation.
+    clearLogin();
   });
   afterEach(() => {
     global.fetch = realFetch;
+    clearLogin();
   });
 
   async function waitFor<T>(fn: () => T | undefined, tries = 400): Promise<T> {

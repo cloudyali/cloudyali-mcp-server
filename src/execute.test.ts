@@ -16,7 +16,7 @@ vi.mock("./config.js", () => ({
   STATIC_JWT_OVERRIDE: undefined,
 }));
 
-import { executeAction, requestWithRetry } from "./execute.js";
+import { executeAction, requestWithRetry, trimErrorBody } from "./execute.js";
 import * as catalog from "./catalog.js";
 import { getValidAccessToken } from "./auth.js";
 
@@ -327,5 +327,58 @@ describe("requestWithRetry", () => {
     expect(captured?.aborted).toBe(false);
     external.abort();
     expect(captured?.aborted).toBe(true);
+  });
+});
+
+describe("error bodies never carry database internals", () => {
+  it("withholds a Postgres column error instead of relaying it", () => {
+    // The report that prompted this: order_by:"cost" produced HTTP 500 with
+    // `column "cost" does not exist` — schema disclosure wearing the costume of
+    // a helpful error. pkg/svcerror puts the raw Go error in `details`.
+    const out = trimErrorBody({
+      code: "internal_error",
+      message: "query failed",
+      details: 'ERROR: column "cost" does not exist (SQLSTATE 42703)',
+    });
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("cost\\\" does not exist");
+    expect(json).not.toContain("SQLSTATE");
+    expect(json).not.toContain("details");
+    expect(out.code).toBe("internal_error");
+  });
+
+  it("scrubs a driver error even when it arrives as `message`", () => {
+    // Dropping the field is not enough on its own — anyone can wrap a driver
+    // error into the authored message field.
+    const out = trimErrorBody({ message: 'pq: relation "cur_data_daily" does not exist' });
+    expect(String(out.message)).not.toContain("cur_data_daily");
+    expect(String(out.message)).toMatch(/check the arguments/i);
+  });
+
+  it("scrubs a Go stack trace arriving as a bare string body", () => {
+    const out = trimErrorBody("goroutine 42 [running]:\nmain.handler(/app/queryService/service/cur.go:118)");
+    expect(String(out.error)).not.toContain("queryService");
+    expect(String(out.error)).not.toContain("goroutine");
+  });
+
+  it("scrubs an internal hostname and a connection string", () => {
+    expect(String(trimErrorBody({ message: "dial tcp inventory-svc.svc.cluster.local:5432" }).message))
+      .not.toContain("cluster.local");
+    expect(String(trimErrorBody({ message: "postgres://user@db/cy" }).message)).not.toContain("postgres://");
+  });
+
+  it("leaves an ordinary authored message alone", () => {
+    const out = trimErrorBody({ code: "not_found", message: "No budget with that id." });
+    expect(out.message).toBe("No budget with that id.");
+  });
+
+  it("keeps the savings retry contract intact", () => {
+    const out = trimErrorBody({
+      error: "illegal transition",
+      current_status: "identified",
+      allowed_transitions: ["acknowledged", "ignored"],
+    });
+    expect(out.allowed_transitions).toEqual(["acknowledged", "ignored"]);
+    expect(out.current_status).toBe("identified");
   });
 });

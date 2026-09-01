@@ -80,7 +80,10 @@ export const COST_TOOLS: ToolDef[] = [
       ),
       filters,
       cost_type: { type: "object", description: costTypeHint },
-      order_by: str("Column to sort by."),
+      order_by: enumStr(
+        "Column to sort by. Note the cost column is `amount`, not `cost` — the backend interpolates this into ORDER BY and an unknown column fails the whole query.",
+        ["amount", "account", "region", "service", "cloud_provider", "cost_type", "usage_type", "timestamp"],
+      ),
       order_desc: bool("Sort descending."),
       count: int("Maximum rows to return.", { minimum: 1, maximum: 1000 }),
       count_offset: int("Row offset, for paging.", { minimum: 0 }),

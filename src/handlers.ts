@@ -5,7 +5,7 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { READ_ONLY_CATALOG, searchActions } from "./catalog.js";
 import { AuthError, currentAuthSummary } from "./auth.js";
-import { awaitLogin, loginSuccessMessage } from "./login.js";
+import { clearLogin, currentLogin, loginSuccessMessage, startLogin } from "./login.js";
 import { executeAction } from "./execute.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, PORTAL_URL } from "./config.js";
 import { TOOL_BY_NAME, ToolArgError, callTool, toMcpTools } from "./tools/index.js";
@@ -84,7 +84,7 @@ const RAW_TOOLS: Tool[] = [
   {
     name: "login",
     description:
-      "Sign in to CloudYali. Opens the user's browser to the CloudYali portal, has them authorize this CLI, and saves a refresh token locally. Call this when execute_action returns 'No credentials found' or a token-refresh failure. The call blocks for up to 5 minutes while waiting for the user to authorize in the browser — that's expected, not a hang. Returns the authenticated email and access-token expiry on success.",
+      "Sign in to CloudYali. Call once to start: a browser tab opens and this returns a verification code immediately. SHOW THAT CODE TO THE USER VERBATIM and tell them to authorize only if the browser page displays the same code — that check is what stops another program on their machine from stealing an authorization. Then call login again to complete. Returns quickly every time; it does not block waiting for the browser.",
     inputSchema: { type: "object", properties: {} },
     annotations: {
       title: "Sign in to CloudYali",
@@ -199,13 +199,83 @@ export async function handleToolCall(
     }
 
     if (name === "login") {
-      try {
-        const creds = await awaitLogin(undefined, signal);
+      // Two-phase on purpose. The verification code only defends against a
+      // rogue local process if the user sees it *before* deciding whether to
+      // trust the browser page. A blocking call returns after that decision,
+      // and stderr — where the code used to go — is a log file under an MCP
+      // client, not something anyone reads.
+      const existing = currentLogin();
+
+      if (existing?.status === "done" && existing.credentials) {
+        const creds = existing.credentials;
+        clearLogin();
+        return {
+          content: [{ type: "text", text: `${loginSuccessMessage(creds)} Retry the original tool call now.` }],
+        };
+      }
+
+      if (existing?.status === "failed") {
+        const message = existing.error?.message ?? "Sign-in failed.";
+        clearLogin();
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Sign-in failed: ${message} Call login again to start over.`,
+            },
+          ],
+        };
+      }
+
+      if (existing?.status === "pending") {
+        // Give a fast user a moment to land, so the common case finishes on
+        // this call rather than needing a third.
+        await Promise.race([
+          existing.done.catch(() => undefined),
+          new Promise((r) => setTimeout(r, 3000).unref?.()),
+        ]);
+        const after = currentLogin();
+        if (after?.status === "done" && after.credentials) {
+          const creds = after.credentials;
+          clearLogin();
+          return {
+            content: [{ type: "text", text: `${loginSuccessMessage(creds)} Retry the original tool call now.` }],
+          };
+        }
+        if (after?.status === "failed") {
+          const message = after.error?.message ?? "Sign-in failed.";
+          clearLogin();
+          return { isError: true, content: [{ type: "text", text: `Sign-in failed: ${message}` }] };
+        }
         return {
           content: [
             {
               type: "text",
-              text: `${loginSuccessMessage(creds)} Retry the original tool call now.`,
+              text:
+                `Still waiting for authorization.\n\n` +
+                `Verification code: ${existing.code}\n\n` +
+                `In the browser tab, check the page shows this exact code, then click Authorize. ` +
+                `If no tab opened, go to:\n${existing.portalUrl}\n\n` +
+                `Call login again once you have authorized.`,
+            },
+          ],
+        };
+      }
+
+      try {
+        const session = await startLogin(undefined, signal);
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Sign-in started — a browser tab should have opened.\n\n` +
+                `Verification code: ${session.code}\n\n` +
+                `Before clicking Authorize, check that the page shows this exact code. ` +
+                `If it shows a different code, or none, the request did not come from this tool — cancel it.\n\n` +
+                `If no tab opened, go to:\n${session.portalUrl}\n\n` +
+                `Call login again once you have authorized.`,
             },
           ],
         };
@@ -215,7 +285,7 @@ export async function handleToolCall(
           content: [
             {
               type: "text",
-              text: `Login failed: ${err instanceof Error ? err.message : String(err)}. The browser may have timed out (5-minute window) or the portal at ${PORTAL_URL} may be unreachable.`,
+              text: `Could not start sign-in: ${err instanceof Error ? err.message : String(err)}. The portal at ${PORTAL_URL} may be unreachable.`,
             },
           ],
         };

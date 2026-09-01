@@ -52,9 +52,51 @@ export function verificationCodeFromState(state: string): string {
   return `${digest.slice(0, 4)}-${digest.slice(4, 8)}`;
 }
 
+/**
+ * Render an expiry in UTC *and* the machine's local time.
+ *
+ * UTC alone is precise and useless: the person reading it is deciding whether
+ * they need to act soon, and that means mental arithmetic against an offset
+ * they may not know. Local alone is ambiguous in a transcript that may be read
+ * from another timezone. Both, with the zone named, answers either question
+ * without the reader converting anything.
+ */
+export function formatExpiry(epochSeconds: number): string {
+  const d = new Date(epochSeconds * 1000);
+  if (!Number.isFinite(d.getTime())) return "an unknown time";
+
+  const utc = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const local = new Intl.DateTimeFormat("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+
+  // Drop the repeated date when both land on the same calendar day, which is
+  // the common case and the one where the extra text is pure noise.
+  const sameDay = utc.slice(0, utc.indexOf(",")) === local.slice(0, local.indexOf(","));
+  const localPart = sameDay ? local.slice(local.indexOf(",") + 2) : local;
+
+  return `${utc} UTC (${localPart} ${zone})`;
+}
+
 export function loginSuccessMessage(creds: StoredCredentials): string {
-  const expIso = new Date(creds.expiresAt * 1000).toISOString();
-  return `Logged in as ${creds.email || "(unknown email)"}. Access token expires ${expIso}. Refresh happens automatically; you should not need to log in again until the refresh token itself expires.`;
+  return `Logged in as ${creds.email || "(unknown email)"}. Access token expires ${formatExpiry(
+    creds.expiresAt,
+  )}, and refreshes automatically — you should not need to sign in again until the refresh token itself expires.`;
 }
 
 // Minimal page served at /callback: parse the token fragment, clear it from
@@ -147,109 +189,212 @@ export async function assertPortalReachable(): Promise<void> {
   }
 }
 
+/**
+ * A sign-in that has been started and is waiting for the user to authorize.
+ *
+ * Two-phase on purpose. The verification code exists so the user can tell a
+ * sign-in *they* started from one a rogue local process started — that process
+ * can open the browser to /cli-login with its own redirect_uri and collect
+ * full-account tokens if the user clicks through. The defence only works if the
+ * user can see the code before deciding.
+ *
+ * The original flow printed it to stderr, which is a terminal for the CLI bin
+ * but a log file nobody reads when the server runs under an MCP client. And the
+ * tool result — the one channel the user does watch — arrived only after
+ * authorization, too late to compare against. So the code has to come back from
+ * the first call, before the browser decision, not after it.
+ */
+export type LoginSession = {
+  /** The code to compare against the one on the portal page. */
+  code: string;
+  /** Where the browser was sent, for the case where it did not open. */
+  portalUrl: string;
+  startedAt: number;
+  expiresAt: number;
+  status: "pending" | "done" | "failed";
+  credentials?: StoredCredentials;
+  error?: Error;
+  /** Settles when the browser flow finishes. Already has a catch attached. */
+  done: Promise<StoredCredentials>;
+  cancel(): void;
+};
+
+let current: LoginSession | null = null;
+
+/** The in-flight sign-in, if any. Expired sessions are cleared on read. */
+export function currentLogin(): LoginSession | null {
+  if (current && current.status === "pending" && Date.now() > current.expiresAt) {
+    current.cancel();
+    current.status = "failed";
+    current.error = new Error("Sign-in timed out waiting for browser authorization.");
+  }
+  return current;
+}
+
+export function clearLogin(): void {
+  current?.cancel();
+  current = null;
+}
+
+/**
+ * Begin a sign-in: bind a loopback listener, open the browser, and return as
+ * soon as the code is known. Does not wait for the user.
+ */
+export async function startLogin(
+  timeoutMs = 5 * 60 * 1000,
+  signal?: AbortSignal,
+): Promise<LoginSession> {
+  const existing = currentLogin();
+  if (existing && existing.status === "pending") return existing;
+
+  const expectedState = randomBytes(16).toString("hex");
+  if (signal?.aborted) throw new Error("Login aborted by the caller before it started.");
+
+  // Fail before opening a browser tab if the portal is down.
+  await assertPortalReachable();
+
+  let settle: (c: StoredCredentials) => void = () => {};
+  let fail: (e: Error) => void = () => {};
+  const done = new Promise<StoredCredentials>((resolve, reject) => {
+    settle = resolve;
+    fail = reject;
+  });
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (req.method === "GET" && url.pathname === "/callback") {
+      reply(res, 200, callbackHtml(), "text/html; charset=utf-8");
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/token") {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.state || body.state !== expectedState) {
+          reply(res, 400, "state mismatch");
+          fail(new Error("state mismatch — possible CSRF, login aborted"));
+          server.close();
+          return;
+        }
+        if (body.error === "access_denied") {
+          reply(res, 200, "cancelled");
+          fail(new Error("Login cancelled by the user in the browser."));
+          setTimeout(() => server.close(), 200);
+          return;
+        }
+        if (!body.access_token || !body.refresh_token) {
+          reply(res, 400, "missing tokens in callback");
+          fail(new Error("Portal did not return access_token/refresh_token"));
+          server.close();
+          return;
+        }
+        const expiresAt = Number.parseInt(body.expires_at ?? "0", 10);
+        const stored: StoredCredentials = {
+          email: body.email ?? "",
+          accessToken: body.access_token,
+          ...(body.id_token ? { idToken: body.id_token } : {}),
+          refreshToken: body.refresh_token,
+          expiresAt:
+            Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : nowEpochSeconds() + 3600,
+          savedAt: nowEpochSeconds(),
+        };
+        saveCredentials(stored);
+        reply(res, 200, "ok");
+        // Give the browser a beat to render the success page before we close.
+        setTimeout(() => server.close(), 200);
+        settle(stored);
+        return;
+      } catch (err) {
+        reply(res, 500, String(err));
+        fail(err instanceof Error ? err : new Error(String(err)));
+        server.close();
+        return;
+      }
+    }
+    reply(res, 404, "not found");
+  });
+
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
+  });
+
+  // 127.0.0.1, not localhost: the server binds IPv4-only, and on IPv6-first
+  // systems `localhost` can resolve to ::1 with no fallback.
+  const redirectUri = `http://127.0.0.1:${port}/callback`;
+  const code = verificationCodeFromState(expectedState);
+  const portalUrl = `${PORTAL_URL}/cli-login?redirect_uri=${encodeURIComponent(
+    redirectUri,
+  )}&state=${expectedState}&code=${encodeURIComponent(code)}`;
+
+  const timer = setTimeout(() => {
+    server.close();
+    fail(new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for browser login.`));
+  }, timeoutMs);
+  if (typeof timer.unref === "function") timer.unref();
+
+  const onAbort = () => {
+    server.close();
+    fail(new Error("Login aborted by the caller."));
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  const session: LoginSession = {
+    code,
+    portalUrl,
+    startedAt: Date.now(),
+    expiresAt: Date.now() + timeoutMs,
+    status: "pending",
+    done,
+    cancel() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      server.close();
+    },
+  };
+
+  done.then(
+    (creds) => {
+      session.status = "done";
+      session.credentials = creds;
+      clearTimeout(timer);
+    },
+    (err: Error) => {
+      session.status = "failed";
+      session.error = err;
+      clearTimeout(timer);
+    },
+  );
+
+  // Still useful for the CLI bin, where stderr is a terminal the user reads.
+  process.stderr.write(`Opening browser to ${portalUrl}\n`);
+  process.stderr.write(
+    `If it does not open automatically, paste that URL into a browser where you are signed in to ${PORTAL_URL}.\n`,
+  );
+  process.stderr.write(
+    `Verification code: ${code} — only authorize if the browser page shows this exact code.\n`,
+  );
+  openBrowser(portalUrl);
+
+  current = session;
+  return session;
+}
+
+/**
+ * Start a sign-in and wait for it to finish.
+ *
+ * The blocking form, kept for the `cloudyali-mcp-login` bin where the user is
+ * watching a terminal. The MCP tool uses startLogin + polling instead, so the
+ * code reaches the user before they are asked to trust the browser page.
+ */
 export async function awaitLogin(
   timeoutMs = 5 * 60 * 1000,
   signal?: AbortSignal,
 ): Promise<StoredCredentials> {
-  const expectedState = randomBytes(16).toString("hex");
-
-  // If the caller already cancelled (e.g. the MCP request was aborted before we
-  // even reached the portal check), don't open a browser or bind a listener.
-  if (signal?.aborted) {
-    throw new Error("Login aborted by the caller before it started.");
+  const session = await startLogin(timeoutMs, signal);
+  try {
+    return await session.done;
+  } finally {
+    if (current === session) current = null;
   }
-
-  await assertPortalReachable();
-
-  return new Promise<StoredCredentials>((resolve, reject) => {
-    const server = createServer(async (req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
-      if (req.method === "GET" && url.pathname === "/callback") {
-        reply(res, 200, callbackHtml(), "text/html; charset=utf-8");
-        return;
-      }
-      if (req.method === "POST" && url.pathname === "/token") {
-        try {
-          const body = await readJsonBody(req);
-          if (!body.state || body.state !== expectedState) {
-            reply(res, 400, "state mismatch");
-            reject(new Error("state mismatch — possible CSRF, login aborted"));
-            server.close();
-            return;
-          }
-          if (body.error === "access_denied") {
-            reply(res, 200, "cancelled");
-            reject(new Error("Login cancelled by the user in the browser."));
-            setTimeout(() => server.close(), 200);
-            return;
-          }
-          if (!body.access_token || !body.refresh_token) {
-            reply(res, 400, "missing tokens in callback");
-            reject(new Error("Portal did not return access_token/refresh_token"));
-            server.close();
-            return;
-          }
-          const expiresAt = Number.parseInt(body.expires_at ?? "0", 10);
-          const stored: StoredCredentials = {
-            email: body.email ?? "",
-            accessToken: body.access_token,
-            ...(body.id_token ? { idToken: body.id_token } : {}),
-            refreshToken: body.refresh_token,
-            expiresAt: Number.isFinite(expiresAt) && expiresAt > 0
-              ? expiresAt
-              : nowEpochSeconds() + 3600,
-            savedAt: nowEpochSeconds(),
-          };
-          saveCredentials(stored);
-          reply(res, 200, "ok");
-          // Give the browser a beat to render the success page before we close.
-          setTimeout(() => server.close(), 200);
-          resolve(stored);
-          return;
-        } catch (err) {
-          reply(res, 500, String(err));
-          reject(err instanceof Error ? err : new Error(String(err)));
-          server.close();
-          return;
-        }
-      }
-      reply(res, 404, "not found");
-    });
-
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address() as AddressInfo;
-      const port = addr.port;
-      // 127.0.0.1, not localhost: the server binds IPv4-only, and on
-      // IPv6-first systems `localhost` can resolve to ::1 with no fallback.
-      const redirectUri = `http://127.0.0.1:${port}/callback`;
-      const code = verificationCodeFromState(expectedState);
-      const portalUrl = `${PORTAL_URL}/cli-login?redirect_uri=${encodeURIComponent(redirectUri)}&state=${expectedState}&code=${encodeURIComponent(code)}`;
-
-      process.stderr.write(`Opening browser to ${portalUrl}\n`);
-      process.stderr.write(`If it does not open automatically, paste that URL into a browser where you are signed in to ${PORTAL_URL}.\n`);
-      process.stderr.write(`Verification code: ${code} — only authorize if the browser page shows this exact code.\n`);
-      openBrowser(portalUrl);
-    });
-
-    setTimeout(() => {
-      server.close();
-      reject(new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for browser login.`));
-    }, timeoutMs).unref();
-
-    // Caller cancellation (client sent notifications/cancelled, or the transport
-    // closed): stop the listener and reject instead of holding the browser flow
-    // open for the full timeout.
-    if (signal) {
-      signal.addEventListener(
-        "abort",
-        () => {
-          server.close();
-          reject(new Error("Login aborted by the caller."));
-        },
-        { once: true },
-      );
-    }
-  });
 }
 
 async function main() {
