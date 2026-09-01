@@ -22,6 +22,7 @@ import {
   truncationNote,
   PROVIDERS,
 } from "./types.js";
+import { filterWarningFor } from "../filter-support.js";
 
 // The filter-group grammar is genuinely intricate and is documented once, as an
 // MCP resource (see src/resources.ts), rather than pasted into six descriptions.
@@ -32,6 +33,18 @@ const filters = arrOf({ type: "object" }, FILTERS_HINT);
 
 const costTypeHint =
   'Which line-item types to sum, as {"inclusions": ["Usage", "Tax"]}. Omit to include everything. Discover the valid values for this account with list_filter_values.';
+
+
+/**
+ * Put the dropped-filter warning ahead of the numbers.
+ *
+ * Leading, not trailing: a caveat printed after a total is read as a footnote,
+ * and the whole point is that the total is wrong.
+ */
+function prefixWarning(args: Record<string, unknown>, text: string): string {
+  const warning = filterWarningFor(args.filters);
+  return warning ? `${warning}\n\n${text}` : text;
+}
 
 export const COST_TOOLS: ToolDef[] = [
   {
@@ -47,7 +60,7 @@ export const COST_TOOLS: ToolDef[] = [
       cost_type: { type: "object", description: costTypeHint },
     }),
     call: (a) => ({ action: "cost.spend", body: a }),
-    present: (body) => {
+    present: (body, args) => {
       const o = (body ?? {}) as Record<string, unknown>;
       const cur = (o.current ?? o.current_period) as Record<string, unknown> | undefined;
       const amount = cur?.total ?? cur?.amount ?? o.total;
@@ -57,7 +70,7 @@ export const COST_TOOLS: ToolDef[] = [
         amount !== undefined ? `Total spend: ${amount}.` : "Spend returned.",
         pct !== undefined ? `Change vs the previous period: ${pct}%.` : "",
       ].filter(Boolean);
-      return { structured: o, text: parts.join(" ") };
+      return { structured: o, text: prefixWarning(args, parts.join(" ")) };
     },
   },
 
@@ -94,11 +107,11 @@ export const COST_TOOLS: ToolDef[] = [
       const dims = (args.group_by_dimensions as string[] | undefined)?.join(", ");
       return {
         structured: { rows, row_count: rows.length },
-        text: listSummary("cost rows", rows, {
+        text: prefixWarning(args, listSummary("cost rows", rows, {
           emptyHint:
             "Widen the date range, or check the filter values with list_filter_values. Do not retry with only the grouping changed — if a broad query returns nothing, the filter or window is wrong, not the grouping." +
             (dims ? ` Current grouping: ${dims}.` : ""),
-        }),
+        })),
       };
     },
   },
@@ -126,12 +139,12 @@ export const COST_TOOLS: ToolDef[] = [
       ["start_time", "end_time"],
     ),
     call: (a) => ({ action: "cost.report", body: a }),
-    present: (body) => {
+    present: (body, args) => {
       const o = (body ?? {}) as Record<string, unknown>;
       const summary = o.summary as Record<string, unknown> | undefined;
       return {
         structured: o,
-        text: summary?.total !== undefined ? `Cost report returned. Total: ${summary.total}.` : "Cost report returned.",
+        text: prefixWarning(args, summary?.total !== undefined ? `Cost report returned. Total: ${summary.total}.` : "Cost report returned."),
       };
     },
   },
@@ -151,13 +164,13 @@ export const COST_TOOLS: ToolDef[] = [
       ["start_date", "end_date"],
     ),
     call: (a) => ({ action: "cost.filters", body: a }),
-    present: (body) => {
+    present: (body, args) => {
       const o = (body ?? {}) as Record<string, unknown>;
       const counts = Object.entries(o)
         .filter(([, v]) => Array.isArray(v))
         .map(([k, v]) => `${k}: ${(v as unknown[]).length}`)
         .join(", ");
-      return { structured: o, text: counts ? `Filter values available — ${counts}.` : "No filter values returned." };
+      return { structured: o, text: prefixWarning(args, counts ? `Filter values available — ${counts}.` : "No filter values returned.") };
     },
   },
 ];

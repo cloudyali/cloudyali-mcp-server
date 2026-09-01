@@ -52,6 +52,27 @@ Tags use a different shape:
 "tags": [{ "key": "env", "value": { "operator": "equals", "value": ["prod"] } }]
 \`\`\`
 
+## Dimensions the API silently ignores, per provider
+
+Filtering is applied only where the provider's schema has a column for it. Where
+it does not, **the condition is dropped with no error and a 200 response** — you
+get provider-wide rows that look like a filtered answer.
+
+| Provider | Silently ignored |
+|---|---|
+| AWS | \`usage_types\` |
+| GCP | \`usage_types\`, \`resource_types\` |
+| Azure | \`resource_types\` |
+| Databricks | \`regions\`, \`resource_types\` |
+| Anthropic | \`regions\`, \`cost_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\` |
+| Fastly | \`cost_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\` |
+| OpenAI | \`regions\`, \`cost_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\` |
+
+The cost tools detect this and prefix a warning to their summary, so you do not
+have to hold the table in mind. When you see that warning, either narrow the
+returned rows yourself or move the dimension into \`group_by_dimensions\` and sum
+the groups you want — do not report the raw total as filtered.
+
 ## Failure mode worth knowing
 
 Unknown keys and unknown operators are **silently ignored** server-side. A filter
