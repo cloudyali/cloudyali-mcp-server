@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { TOOL_DEFS } from "./tools/index.js";
 import { Action, CATALOG, READ_ONLY_CATALOG, findAction, isBlockedAction, searchActions } from "./catalog.js";
+
+// Minimal required args for the tools whose call() reads them.
+const SAMPLE: Record<string, Record<string, unknown>> = {
+  list_inventory_facets: { facet: "providers" },
+};
 
 function makeAction(overrides: Partial<Action>): Action {
   return {
@@ -323,15 +329,13 @@ describe("budgets catalog", () => {
 });
 
 describe("handlers ↔ catalog contract", () => {
-  it("search tool category enum covers every catalog category", async () => {
-    const { TOOLS } = await import("./handlers.js");
-    const search = TOOLS.find((t) => t.name === "search_actions");
-    const schema = search?.inputSchema as {
-      properties?: { category?: { enum?: string[] } };
-    };
-    const enumVals = schema?.properties?.category?.enum ?? [];
+  it("every catalog category is reachable through a typed tool", () => {
+    // The proxy's category enum used to be the contract here. Typed tools
+    // replaced it, so the invariant becomes: no category is stranded without a
+    // tool that reads it.
+    const covered = new Set(TOOL_DEFS.map((t) => findAction(t.call(SAMPLE[t.name] ?? {}).action)?.category));
     for (const c of new Set(CATALOG.map((a) => a.category))) {
-      expect(enumVals, `search_actions category enum must include "${c}"`).toContain(c);
+      expect([...covered], `no typed tool reads the "${c}" category`).toContain(c);
     }
   });
 });

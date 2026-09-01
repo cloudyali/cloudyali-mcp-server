@@ -24,11 +24,14 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PACKAGE_VERSION } from "./config.js";
 import { TOOLS, handleToolCall } from "./handlers.js";
 import { isDirectRun } from "./cli.js";
+import { RESOURCES, readResource } from "./resources.js";
 
 export const server = new Server(
   {
@@ -38,6 +41,7 @@ export const server = new Server(
   {
     capabilities: {
       tools: {},
+      resources: {},
     },
   },
 );
@@ -47,6 +51,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (req, extra) =>
   handleToolCall(req.params.name, req.params.arguments, extra.signal),
 );
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: RESOURCES }));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+  contents: [readResource(req.params.uri)],
+}));
 
 async function main() {
   const transport = new StdioServerTransport();

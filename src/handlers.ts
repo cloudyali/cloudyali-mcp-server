@@ -8,8 +8,9 @@ import { AuthError, currentAuthSummary } from "./auth.js";
 import { awaitLogin, loginSuccessMessage } from "./login.js";
 import { executeAction } from "./execute.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, PORTAL_URL } from "./config.js";
+import { TOOL_BY_NAME, ToolArgError, callTool, toMcpTools } from "./tools/index.js";
 
-export const TOOLS: Tool[] = [
+const RAW_TOOLS: Tool[] = [
   {
     name: "search_actions",
     description:
@@ -95,6 +96,22 @@ export const TOOLS: Tool[] = [
   },
 ];
 
+// The generic search_actions / execute_action pair is an escape hatch, not the
+// product. It is the only route to a catalog action that no typed tool wraps
+// yet, and its response still goes through the same projection — but it asks
+// the model to do a catalog lookup before it can do work, and it cannot carry
+// per-argument validation. Off unless explicitly enabled.
+export const ADVANCED_ENABLED = process.env.CLOUDYALI_MCP_ADVANCED === "1";
+
+const LOGIN_TOOL = RAW_TOOLS.filter((t) => t.name === "login");
+const PROXY_TOOLS = RAW_TOOLS.filter((t) => t.name !== "login");
+
+export const TOOLS: Tool[] = [
+  ...toMcpTools(),
+  ...LOGIN_TOOL,
+  ...(ADVANCED_ENABLED ? PROXY_TOOLS : []),
+];
+
 export async function handleToolCall(
   name: string,
   rawArgs: unknown,
@@ -103,6 +120,21 @@ export async function handleToolCall(
   const args = (rawArgs ?? {}) as Record<string, unknown>;
 
   try {
+    const typed = TOOL_BY_NAME.get(name);
+    if (typed) return await callTool(typed, rawArgs, signal);
+
+    if ((name === "search_actions" || name === "execute_action" || name === "list_categories") && !ADVANCED_ENABLED) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `"${name}" is not enabled. Use the named CloudYali tools instead — call tools/list to see them. To re-enable the raw catalog interface, restart the server with CLOUDYALI_MCP_ADVANCED=1.`,
+          },
+        ],
+      };
+    }
+
     if (name === "search_actions") {
       const query = String(args.query ?? "");
       const category = args.category ? String(args.category) : undefined;
@@ -195,6 +227,9 @@ export async function handleToolCall(
       content: [{ type: "text", text: `Unknown tool: ${name}` }],
     };
   } catch (err) {
+    if (err instanceof ToolArgError) {
+      return { isError: true, content: [{ type: "text", text: err.message }] };
+    }
     if (err instanceof AuthError) {
       return {
         isError: true,

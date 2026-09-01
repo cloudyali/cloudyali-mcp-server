@@ -1,132 +1,126 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./execute.js", () => ({ executeAction: vi.fn() }));
-vi.mock("./login.js", () => ({
-  awaitLogin: vi.fn(),
-  loginSuccessMessage: vi.fn(() => "Logged in as user@example.com."),
-}));
+vi.mock("./execute.js", async () => {
+  const actual = await vi.importActual<typeof import("./execute.js")>("./execute.js");
+  return { ...actual, executeAction: vi.fn(), executeActionRaw: vi.fn() };
+});
 
-import { executeAction } from "./execute.js";
-import { awaitLogin } from "./login.js";
+import { ADVANCED_ENABLED, TOOLS, handleToolCall } from "./handlers.js";
+import { TOOL_DEFS } from "./tools/index.js";
+import { executeAction, executeActionRaw } from "./execute.js";
 import { AuthError } from "./auth.js";
-import { READ_ONLY_CATALOG } from "./catalog.js";
-import { TOOLS, handleToolCall } from "./handlers.js";
 
 const mockExecute = vi.mocked(executeAction);
-const mockLogin = vi.mocked(awaitLogin);
+const mockExecuteRaw = vi.mocked(executeActionRaw);
 
-function textOf(result: Awaited<ReturnType<typeof handleToolCall>>): string {
-  const first = result.content?.[0];
+function textOf(res: Awaited<ReturnType<typeof handleToolCall>>): string {
+  const first = res.content?.[0];
   return first && first.type === "text" ? first.text : "";
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-describe("TOOLS", () => {
-  it("exposes exactly the four tools, in order", () => {
-    expect(TOOLS.map((t) => t.name)).toEqual([
-      "search_actions",
-      "execute_action",
-      "list_categories",
-      "login",
-    ]);
+describe("the advertised tool surface", () => {
+  it("advertises every typed tool plus login", () => {
+    const names = TOOLS.map((t) => t.name);
+    for (const def of TOOL_DEFS) expect(names, `${def.name} missing`).toContain(def.name);
+    expect(names).toContain("login");
   });
 
-  it("annotates every data tool read-only, and login alone as open-world", () => {
-    // The catalog exposes no writes, so every data tool is readOnly. `login` is
-    // the sole exception: it opens a browser and talks to the portal.
-    for (const name of ["search_actions", "execute_action", "list_categories"]) {
-      const t = TOOLS.find((x) => x.name === name);
-      expect(t?.annotations?.readOnlyHint, `${name} readOnlyHint`).toBe(true);
+  it("hides the raw catalog proxy unless CLOUDYALI_MCP_ADVANCED is set", () => {
+    // The default matters: search_actions/execute_action make the model do a
+    // lookup before it can work, and carry no per-argument validation. They are
+    // a fallback for actions no typed tool wraps, not the product.
+    const names = TOOLS.map((t) => t.name);
+    if (ADVANCED_ENABLED) {
+      expect(names).toContain("execute_action");
+    } else {
+      expect(names).not.toContain("execute_action");
+      expect(names).not.toContain("search_actions");
+      expect(names).not.toContain("list_categories");
     }
-    expect(TOOLS.find((t) => t.name === "execute_action")?.annotations?.destructiveHint).toBe(false);
-    expect(TOOLS.find((t) => t.name === "search_actions")?.annotations?.openWorldHint).toBe(false);
-    expect(TOOLS.find((t) => t.name === "list_categories")?.annotations?.openWorldHint).toBe(false);
-    expect(TOOLS.find((t) => t.name === "login")?.annotations?.openWorldHint).toBe(true);
+  });
+
+  it("marks login as the only open-world tool", () => {
+    for (const t of TOOLS) {
+      if (t.name === "login") {
+        expect(t.annotations?.openWorldHint).toBe(true);
+      } else {
+        expect(t.annotations?.readOnlyHint, `${t.name} readOnlyHint`).toBe(true);
+      }
+    }
+  });
+
+  it("gives every advertised tool a description and an object input schema", () => {
+    for (const t of TOOLS) {
+      expect(t.description, `${t.name} description`).toBeTruthy();
+      expect(t.inputSchema?.type, `${t.name} inputSchema`).toBe("object");
+    }
   });
 });
 
-describe("handleToolCall: search_actions", () => {
-  it("returns matching actions with a count", async () => {
-    const res = await handleToolCall("search_actions", { query: "inventory" });
-    const body = JSON.parse(textOf(res));
-    expect(body.count).toBeGreaterThan(0);
-    expect(body.results.every((r: { id?: string }) => !!r.id)).toBe(true);
+describe("dispatch", () => {
+  beforeEach(() => {
+    mockExecute.mockReset();
+    mockExecuteRaw.mockReset();
   });
+  afterEach(() => vi.restoreAllMocks());
 
-  it("defaults the limit to 10 when it is not a number", async () => {
-    const res = await handleToolCall("search_actions", { query: "cost", limit: "nope" });
-    expect(JSON.parse(textOf(res)).count).toBeLessThanOrEqual(10);
-  });
-});
-
-describe("handleToolCall: list_categories", () => {
-  it("returns per-category counts and the catalog total", async () => {
-    const body = JSON.parse(textOf(await handleToolCall("list_categories", {})));
-    expect(body.total).toBe(READ_ONLY_CATALOG.length);
-    expect(body.by_category.inventory).toBeGreaterThan(0);
-    expect(body.base_url).toContain("http");
-    expect(body.mode).toBe("read-only");
-  });
-});
-
-describe("handleToolCall: execute_action", () => {
-  it("passes parsed args to executeAction and returns its text", async () => {
-    mockExecute.mockResolvedValue('{"ok":true}');
-    const res = await handleToolCall("execute_action", { id: "cost.spend", body: { x: 1 } });
-    expect(mockExecute).toHaveBeenCalledWith({
-      id: "cost.spend",
-      path_params: undefined,
-      query_params: undefined,
-      body: { x: 1 },
+  it("routes a typed tool through executeActionRaw", async () => {
+    mockExecuteRaw.mockResolvedValue({
+      request: { action_id: "budgets.list", method: "GET", path: "/v1/budgets" },
+      status: 200,
+      ok: true,
+      body: [{ name: "Platform", amount: 100 }],
     });
-    expect(textOf(res)).toBe('{"ok":true}');
+    const res = await handleToolCall("list_budgets", {});
+    expect(mockExecuteRaw).toHaveBeenCalledOnce();
+    expect(mockExecuteRaw.mock.calls[0][0].id).toBe("budgets.list");
+    expect(res.structuredContent).toBeDefined();
   });
 
-  it("surfaces an AuthError with its hint as an error result", async () => {
-    mockExecute.mockRejectedValue(new AuthError("No credentials found.", "Run login."));
-    const res = await handleToolCall("execute_action", { id: "cost.spend" });
+  it("returns a specific, actionable message for a bad argument", async () => {
+    const res = await handleToolCall("get_budget", { id: "seven" });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("No credentials found.");
-    expect(textOf(res)).toContain("Hint: Run login.");
+    expect(textOf(res)).toMatch(/Invalid value for "id": expected a number/);
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
   });
 
-  it("surfaces a generic error", async () => {
-    mockExecute.mockRejectedValue(new Error("boom"));
-    const res = await handleToolCall("execute_action", { id: "cost.spend" });
+  it("rejects an invented argument instead of silently ignoring it", async () => {
+    const res = await handleToolCall("list_budgets", { customer_id: 211 });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("Error: boom");
-  });
-});
-
-describe("handleToolCall: login", () => {
-  it("returns a success message on login", async () => {
-    mockLogin.mockResolvedValue({
-      email: "user@example.com",
-      accessToken: "at",
-      refreshToken: "rt",
-      expiresAt: 1,
-      savedAt: 1,
-    });
-    const res = await handleToolCall("login", {});
-    expect(textOf(res)).toContain("Logged in as user@example.com.");
-    expect(textOf(res)).toContain("Retry");
+    expect(textOf(res)).toMatch(/Unknown argument "customer_id"/);
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
   });
 
-  it("returns an error result when login fails", async () => {
-    mockLogin.mockRejectedValue(new Error("timed out"));
-    const res = await handleToolCall("login", {});
+  it("refuses a proxy tool by name when advanced mode is off, even if a client cached the old list", async () => {
+    if (ADVANCED_ENABLED) return;
+    for (const name of ["search_actions", "execute_action", "list_categories"]) {
+      const res = await handleToolCall(name, { query: "cost" });
+      expect(res.isError, name).toBe(true);
+      expect(textOf(res), name).toMatch(/not enabled/);
+      expect(textOf(res), name).toMatch(/CLOUDYALI_MCP_ADVANCED=1/);
+    }
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it("reports an unknown tool by name", async () => {
+    const res = await handleToolCall("no_such_tool", {});
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("Login failed: timed out");
+    expect(textOf(res)).toMatch(/Unknown tool: no_such_tool/);
   });
-});
 
-describe("handleToolCall: unknown tool", () => {
-  it("returns an error for an unrecognized tool name", async () => {
-    const res = await handleToolCall("nope", {});
+  it("surfaces an AuthError with its hint so the model knows to call login", async () => {
+    mockExecuteRaw.mockRejectedValue(new AuthError("No credentials found.", "Call the `login` tool."));
+    const res = await handleToolCall("list_budgets", {});
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("Unknown tool: nope");
+    expect(textOf(res)).toMatch(/No credentials found/);
+    expect(textOf(res)).toMatch(/Hint: Call the `login` tool./);
+  });
+
+  it("surfaces a generic failure without a stack trace", async () => {
+    mockExecuteRaw.mockRejectedValue(new Error("upstream exploded"));
+    const res = await handleToolCall("list_budgets", {});
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toBe("Error: upstream exploded");
+    expect(textOf(res)).not.toMatch(/\.ts:\d+/);
   });
 });

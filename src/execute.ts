@@ -119,13 +119,28 @@ export async function requestWithRetry(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export async function executeAction(args: {
+export type ActionResult = {
+  request: { action_id: string; method: string; path: string };
+  status: number;
+  ok: boolean;
+  body: unknown;
+};
+
+/**
+ * Call a catalog action and return the shaped result as an object.
+ *
+ * The typed tools in src/tools consume this; `executeAction` below is the same
+ * thing stringified, kept for the raw escape-hatch tool. Both go through the
+ * same auth, throttle, retry and response-policy path — there is deliberately
+ * no route to the API that skips the projection.
+ */
+export async function executeActionRaw(args: {
   id: string;
   path_params?: Record<string, unknown>;
   query_params?: Record<string, unknown>;
   body?: unknown;
   signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<ActionResult> {
   const action = findAction(args.id);
   if (!action) {
     const suggestions = searchActions(args.id, undefined, 5).map((a) => a.id);
@@ -171,7 +186,7 @@ export async function executeAction(args: {
     // leave as string
   }
 
-  const result = {
+  const result: ActionResult = {
     request: {
       action_id: action.id,
       method: action.method,
@@ -188,7 +203,12 @@ export async function executeAction(args: {
     // through the per-action response policy. Neither is relayed verbatim.
     body: res.ok ? shapeResponse(action.id, parsed) : trimErrorBody(parsed),
   };
-  return JSON.stringify(result, null, 2);
+  return result;
+}
+
+/** String form of executeActionRaw, for the raw execute_action tool. */
+export async function executeAction(args: Parameters<typeof executeActionRaw>[0]): Promise<string> {
+  return JSON.stringify(await executeActionRaw(args), null, 2);
 }
 
 // Set CLOUDYALI_MCP_SHAPE_AUDIT=1 to have every dropped field path written to
