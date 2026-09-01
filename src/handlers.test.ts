@@ -200,6 +200,38 @@ describe("login is two-phase, so the verification code reaches the user first", 
     expect(textOf(res)).toMatch(/Call login again/i);
   });
 
+  it("reports a failure that lands during the poll window", async () => {
+    // The session can settle to failed *while* the second call is waiting out
+    // its short grace period. That branch must clear and report, not fall
+    // through to "still waiting" and leave the user polling a dead session.
+    let reject: (e: Error) => void = () => {};
+    const done = new Promise<never>((_, r) => {
+      reject = r;
+    });
+    done.catch(() => {});
+    const live = { ...session, done } as Record<string, unknown>;
+    mockCurrent.mockImplementation(() => live as never);
+    setTimeout(() => {
+      live.status = "failed";
+      live.error = new Error("Login cancelled by the user in the browser.");
+      reject(live.error as Error);
+    }, 20);
+
+    const res = await handleToolCall("login", {});
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/cancelled by the user/i);
+    expect(mockClear).toHaveBeenCalled();
+  });
+
+  it("explains an unreachable portal instead of surfacing a raw fetch error", async () => {
+    mockCurrent.mockReturnValue(null);
+    mockStart.mockRejectedValue(new Error("Portal at https://console.example.com is unreachable."));
+    const res = await handleToolCall("login", {});
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Could not start sign-in/);
+    expect(textOf(res)).toMatch(/unreachable/);
+  });
+
   it("does not block for minutes waiting on the browser", async () => {
     mockCurrent.mockReturnValue(null);
     mockStart.mockResolvedValue({ ...session, done: new Promise(() => {}) } as never);
