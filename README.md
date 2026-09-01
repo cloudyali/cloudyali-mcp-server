@@ -17,14 +17,13 @@ Requires a CloudYali account (sign in at [console.cloudyali.io](https://console.
 
 ### 1. Get the code and build it
 
-The server lives in the CloudYali monorepo under `mcp-servers/cloudyali`.
-Requires Node.js 18+ and git on both platforms.
+Requires Node.js 20+ and git on both platforms.
 
 **macOS / Linux**
 
 ```bash
-git clone https://github.com/cloudyali/rajgad.git
-cd rajgad/mcp-servers/cloudyali
+git clone https://github.com/cloudyali/cloudyali-mcp-server.git
+cd cloudyali-mcp-server
 npm install          # installs deps and builds dist/ via the prepare script
 ls dist/index.js && npm test   # verify the build
 ```
@@ -32,8 +31,8 @@ ls dist/index.js && npm test   # verify the build
 **Windows (PowerShell)**
 
 ```powershell
-git clone https://github.com/cloudyali/rajgad.git
-cd rajgad\mcp-servers\cloudyali
+git clone https://github.com/cloudyali/cloudyali-mcp-server.git
+cd cloudyali-mcp-server
 npm install          # installs deps and builds dist\ via the prepare script
 Test-Path dist\index.js; npm test   # verify the build
 ```
@@ -52,13 +51,13 @@ Use the **absolute path** to `dist/index.js` from step 1.
 macOS / Linux:
 
 ```bash
-claude mcp add cy -- node /path/to/rajgad/mcp-servers/cloudyali/dist/index.js
+claude mcp add cy -- node /path/to/cloudyali-mcp-server/dist/index.js
 ```
 
 Windows:
 
 ```powershell
-claude mcp add cy -- node C:\path\to\rajgad\mcp-servers\cloudyali\dist\index.js
+claude mcp add cy -- node C:\path\to\cloudyali-mcp-server\dist\index.js
 ```
 
 > **Tip:** the name you register the server under becomes the tool prefix
@@ -78,7 +77,7 @@ Run `/mcp` to confirm `cy: connected`.
   "mcpServers": {
     "cloudyali": {
       "command": "node",
-      "args": ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
+      "args": ["/path/to/cloudyali-mcp-server/dist/index.js"]
     }
   }
 }
@@ -91,7 +90,7 @@ On Windows, wrap with `cmd /c`:
   "mcpServers": {
     "cloudyali": {
       "command": "cmd",
-      "args": ["/c", "node", "C:\\path\\to\\rajgad\\mcp-servers\\cloudyali\\dist\\index.js"]
+      "args": ["/c", "node", "C:\\path\\to\\cloudyali-mcp-server\\dist\\index.js"]
     }
   }
 }
@@ -110,7 +109,7 @@ ones use a different shape:
 ```toml
 [mcp_servers.cloudyali]
 command = "node"
-args = ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
+args = ["/path/to/cloudyali-mcp-server/dist/index.js"]
 ```
 
 *VS Code* — `.vscode/mcp.json`, where the top-level key is `servers` (not
@@ -121,7 +120,7 @@ args = ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
   "servers": {
     "cloudyali": {
       "command": "node",
-      "args": ["/path/to/rajgad/mcp-servers/cloudyali/dist/index.js"]
+      "args": ["/path/to/cloudyali-mcp-server/dist/index.js"]
     }
   }
 }
@@ -175,13 +174,13 @@ identical in every client: browser `login` tool where a browser is available,
 - *"What are our top savings opportunities right now?"*
 - *"List open recommendations for EBS volumes with more than $50/month savings."*
 - *"How much could we save in total if we actioned every recommendation?"*
-- *"Who is assigned to recommendation 123, and what's its status history?"*
+- *"What is the state and projected saving of recommendation 123?"*
 
 **Anomalies**
 
 - *"Any cost anomalies in the last 7 days?"*
 - *"Summarize anomaly count and impact for the quarter."*
-- *"Show the root cause breakdown for anomaly `<id>`."*
+- *"Show the cost impact and deviation for anomaly `<id>`."*
 
 **Inventory**
 
@@ -212,9 +211,7 @@ The catalog covers **Cost** (`cost.report`, `cost.aggregate`, `cost.spend`,
 `cost.filters`, `cost.filter_parameters_for_budgets`), **Cost-savings
 lifecycle** (`recommendations.list` — the opportunity queue with lifecycle
 filters, `recommendations.summary` — KPI funnel + projected/realized savings,
-`recommendations.get` — per-opportunity detail with runbook / why / provenance,
-and `recommendations.transition` — the one write: acknowledge / start /
-implement / ignore / un-ignore / revert), **Budgets**
+and `recommendations.get` — per-opportunity detail), **Budgets**
 (`budgets.list`, `.summary`, `.get`, `.resources`, `.history`,
 `.config_history`, `.alert_history` — reads only; create/update/delete stay in
 the portal), **Anomalies** (`anomalies.list`, `.summary`, `.get`,
@@ -237,22 +234,14 @@ All optional — the defaults point at CloudYali production.
 
 Pass these via the `env` block of your MCP client config when overriding.
 
-## Read-only by construction, with one allowlisted write
+## Read-only by construction
 
-This server is read-only **except** for a single, explicitly allowlisted write:
-the cost-savings lifecycle transition (`recommendations.transition`), so AI
-agents can *act on* the savings model, not just query it (US-032). It appends
-audit events + ledger records — it never deletes. Enforcement layers:
+This server cannot mutate state. Three layers of enforcement:
 
-1. **Catalog** — no mutating endpoint is present in `src/catalog.ts` except the
-   one allowlisted transition; account/customer/user/anomaly/preference writes
-   simply have no entry to invoke.
-2. **Write allowlist** — a non-`readOnly` action executes only if its id is in
-   `WRITE_ALLOWLIST` **and** it is a `POST` to a `/v1/savings/` path. Everything
-   else marked `readOnly: false` is rejected at runtime.
-3. **Method allowlist** — only `GET` and `POST` actions execute; `PUT`/`DELETE`
-   are always blocked.
-4. **Path denylist** — account-management, customer, user-administration, sync,
+1. **Catalog** — write endpoints are not present in `src/catalog.ts` at all.
+2. **Method allowlist** — only `GET` and read-style `POST` actions execute;
+   `POST` entries must additionally carry `readOnly: true`.
+3. **Path denylist** — account-management, customer, user-administration, sync,
    marketplace, and provisioning endpoints are blocked regardless of method or
    `readOnly` flag.
 
@@ -265,10 +254,8 @@ audit events + ledger records — it never deletes. Enforcement layers:
 
 ## Develop locally
 
-From the monorepo:
-
 ```bash
-cd rajgad/mcp-servers/cloudyali
+cd cloudyali-mcp-server
 npm install        # also builds dist/ via the prepare script
 npm test           # vitest (catalog contract, param-shape, M9 parity)
 npm run smoke      # boot dist/index.js over stdio + MCP handshake (npx smoke)

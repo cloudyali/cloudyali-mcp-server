@@ -360,9 +360,9 @@ export const CATALOG: Action[] = [
     method: "GET",
     path: "/v1/savings/opportunities/:id",
     category: "recommendations",
-    summary: "Get one cost-savings opportunity with runbook, why and provenance",
+    summary: "Get one cost-savings opportunity by ID",
     description:
-      "Full detail for one opportunity: the opportunity row, savings provenance (how the number was computed), the 'why' evidence, a rendered runbook (authored template or a never-blank structured fallback), id-rotation history, per-occurrence detection windows, the audit timeline, and any realized ledger records.",
+      "Detail for one opportunity: the opportunity row itself — resource identity and region, state, category, risk and effort, savings amount and currency, and detection timestamps. Narrative sections (provenance, why-evidence, runbook, id history, occurrences, timeline, ledger records) are not surfaced; see src/shapes.ts.",
     pathParams: {
       id: { type: "integer", description: "Opportunity ID (numeric).", required: true },
     },
@@ -418,7 +418,7 @@ export const CATALOG: Action[] = [
     path: "/v1/anomalies/:id",
     category: "anomalies",
     summary: "Get a single anomaly by ID (UUID)",
-    description: "Full anomaly detail including root cause analysis breakdown.",
+    description: "Anomaly detail: provider, service, account, expected vs actual cost, impact, deviation and z-score, plus detection timestamps. The root-cause-analysis blob is not surfaced; see src/shapes.ts.",
     pathParams: {
       id: { type: "string", description: "Anomaly UUID.", required: true },
     },
