@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RateLimitedError, TokenBucket } from "./throttle.js";
+import { RateLimitedError, Semaphore, TokenBucket } from "./throttle.js";
 
 // A controllable clock: sleep() advances virtual time instead of real time, so
 // these tests are deterministic and instant.
@@ -87,5 +87,45 @@ describe("TokenBucket", () => {
     const b = new TokenBucket({ ratePerMinute: 0, burst: 0, now: c.now, sleep: c.sleep });
     expect(b.available()).toBeGreaterThanOrEqual(1);
     await expect(b.take()).resolves.toBeUndefined();
+  });
+});
+
+describe("the concurrency cap bounds requests in flight, which the rate bucket does not", () => {
+  // Firing all 40 saved views at once got 500s and timeouts back. The bucket was
+  // working exactly as designed — burst 10 means ten heavy aggregations leave
+  // together and sit on the backend together. Rate was never the constraint.
+  it("never runs more than the limit at once", async () => {
+    const sem = new Semaphore(3);
+    let peak = 0;
+    let active = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+
+    const runs = Array.from({ length: 12 }, () =>
+      sem.run(async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await gate;
+        active--;
+      }),
+    );
+    await Promise.resolve();
+    release();
+    await Promise.all(runs);
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+
+  it("frees the slot when the call throws, or one failure would wedge the queue", async () => {
+    const sem = new Semaphore(1);
+    await expect(sem.run(async () => { throw new Error("500"); })).rejects.toThrow("500");
+    expect(sem.active()).toBe(0);
+    await expect(sem.run(async () => "ok")).resolves.toBe("ok");
+  });
+
+  it("queues rather than rejecting, so fan-out is slower and not broken", async () => {
+    const sem = new Semaphore(2);
+    const order: number[] = [];
+    await Promise.all([1, 2, 3, 4, 5].map((n) => sem.run(async () => { order.push(n); })));
+    expect(order.sort()).toEqual([1, 2, 3, 4, 5]);
   });
 });

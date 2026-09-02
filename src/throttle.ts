@@ -126,6 +126,50 @@ export class TokenBucket {
   }
 }
 
+/**
+ * A cap on requests in flight at once, which is a different thing from a cap on
+ * requests per minute.
+ *
+ * The bucket bounds rate; burst still lets N requests leave together and sit on
+ * the backend simultaneously. Asking this server to run all 40 saved cost views
+ * did exactly that: ten concurrent multi-month aggregations, and the API
+ * answered with 500s and timeouts. Rate was never the binding constraint —
+ * simultaneity was.
+ *
+ * A tool description asking the model not to fan out is not a fix. It is advice
+ * in the one place we control least, and the failure mode is a backend melting
+ * for every tenant on that instance. So the queue is here, where fanning out
+ * simply takes longer instead of failing.
+ */
+export class Semaphore {
+  private readonly limit: number;
+  private inFlight = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(limit: number) {
+    this.limit = Math.max(1, limit);
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.inFlight >= this.limit) {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    this.inFlight++;
+    try {
+      return await fn();
+    } finally {
+      this.inFlight--;
+      const next = this.waiting.shift();
+      if (next) next();
+    }
+  }
+
+  /** Test/debug view. */
+  active(): number {
+    return this.inFlight;
+  }
+}
+
 function envInt(name: string): number | undefined {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return undefined;
@@ -139,4 +183,12 @@ export const apiThrottle = new TokenBucket({
   ratePerMinute: envInt("CLOUDYALI_MCP_RATE_PER_MINUTE"),
   burst: envInt("CLOUDYALI_MCP_BURST"),
 });
+
+// Four is chosen against the heaviest call this server makes — a multi-month
+// cost aggregation — not the lightest. At conversational pace nobody notices it;
+// under fan-out it turns "40 at once, half of them 500" into "40 in sequence,
+// all of them answered".
+const DEFAULT_MAX_CONCURRENT = 4;
+
+export const apiConcurrency = new Semaphore(envInt("CLOUDYALI_MCP_MAX_CONCURRENT") ?? DEFAULT_MAX_CONCURRENT);
 

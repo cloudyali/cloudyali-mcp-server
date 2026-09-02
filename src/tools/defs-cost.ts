@@ -32,7 +32,7 @@ const FILTERS_HINT =
 const filters = arrOf({ type: "object" }, FILTERS_HINT);
 
 const costTypeHint =
-  'Which line-item types to sum, as {"inclusions": ["Usage", "Tax"]}. Omit to include everything. Discover the valid values for this account with list_filter_values.';
+  'Which line-item types to sum, as {"inclusions": ["Usage", "Tax"]}. Omit to include everything. Discover the valid values for this account with resolve_facets (domain: cost, dimension cost_type).';
 
 
 /**
@@ -112,7 +112,7 @@ export const COST_TOOLS: ToolDef[] = [
         structured: { rows, row_count: rows.length },
         text: prefixWarning(args, listSummary("cost rows", rows, {
           emptyHint:
-            "Widen the date range, or check the filter values with list_filter_values. Do not retry with only the grouping changed — if a broad query returns nothing, the filter or window is wrong, not the grouping." +
+            "Widen the date range, or check the filter values with resolve_facets (domain: cost). Do not retry with only the grouping changed — if a broad query returns nothing, the filter or window is wrong, not the grouping." +
             (dims ? ` Current grouping: ${dims}.` : ""),
         })),
       };
@@ -153,33 +153,71 @@ export const COST_TOOLS: ToolDef[] = [
   },
 
   {
-    name: "list_filter_values",
-    title: "Discover valid filter values",
+    name: "resolve_facets",
+    title: "What can I filter by, and what values exist",
     description:
-      "The accounts, regions, services, tags and cost types present in the data for a window. Call this before building a filter — filter values are account-specific, and an unrecognised one is silently ignored rather than rejected, which returns unfiltered data that looks like a valid answer.",
+      "Every dimension a domain can be filtered by, with the values this account actually has, narrowed by what is already selected. Covers cost, inventory, anomalies and savings. Call it before building any filter — a value that does not appear here does not exist for this account, and filtering by it returns an empty result that looks like an answer.",
     openWorld: true,
     inputSchema: obj(
       {
-        start_date: rfc3339("Start of the window to look for values in"),
-        end_date: rfc3339("End of the window"),
-        filters,
+        domain: enumStr(
+          "Which surface you are about to filter. Values come from the rows that surface actually pages over — asking `cost` for accounts and then filtering anomalies by one offers accounts that have never had an anomaly.",
+          ["cost", "inventory", "anomalies", "savings"],
+        ),
+        // Absent means all, and the list is deliberately not enumerated here: it is
+        // the domain's to change, and a list copied into a description goes stale
+        // silently. Call with just a domain to see what it offers.
+        dimensions: arrOf(str("Dimension name."), "Limit the answer to these dimensions. Omit to see every dimension the domain offers — do that first if you do not know the names."),
+        selected: {
+          type: "object",
+          description:
+            "What is already chosen, as dimension -> values. The other dimensions narrow to what is still reachable, so a filter can be built one step at a time instead of guessed whole.",
+        },
+        search: {
+          type: "object",
+          description:
+            "Dimension -> substring, to reach values beyond the cap when `truncated` is true. Cost domain only; sending it elsewhere is rejected rather than ignored.",
+        },
+        period: {
+          type: "object",
+          description:
+            'Window as {"from","to"}, RFC3339 and UTC ONLY — "2026-08-01T00:00:00Z" or "+00:00". A bare date or any other offset is rejected outright. Omit for all available history (about seven months of billing).',
+        },
       },
-      ["start_date", "end_date"],
+      ["domain"],
     ),
-    call: (a) => ({ action: "cost.filters", body: a }),
-    present: (body, args) => {
+    call: (a) => ({ action: "facets.resolve", body: a }),
+    present: (body) => {
       const o = (body ?? {}) as Record<string, unknown>;
-      const counts = Object.entries(o)
-        .filter(([, v]) => Array.isArray(v))
-        .map(([k, v]) => `${k}: ${(v as unknown[]).length}`)
-        .join(", ");
-      return { structured: o, text: prefixWarning(args, counts ? `Filter values available — ${counts}.` : "No filter values returned.") };
+      const dims = (o.dimensions ?? {}) as Record<string, { values?: unknown[]; truncated?: boolean }>;
+      const names = Object.keys(dims);
+      if (names.length === 0) {
+        return { structured: o, text: `No dimensions returned for domain ${o.domain ?? "?"}.` };
+      }
+      const counts = names.map((n) => `${n}: ${dims[n]?.values?.length ?? 0}${dims[n]?.truncated ? "+" : ""}`);
+      const parts = [`${o.domain ?? "domain"} — ${counts.join(", ")}.`];
+      // A `+` is a capped list, and a cap with no way past it is a dead end. The
+      // cost domain has search for exactly this; saying so beats letting a model
+      // treat a truncated list as the whole vocabulary.
+      const cut = names.filter((n) => dims[n]?.truncated);
+      if (cut.length) {
+        parts.push(`${cut.join(", ")} ${cut.length === 1 ? "was" : "were"} cut short — these are not all the values. Use search to reach the rest.`);
+      }
+      const empty = names.filter((n) => (dims[n]?.values?.length ?? 0) === 0);
+      if (empty.length) {
+        parts.push(
+          `${empty.join(", ")} ${empty.length === 1 ? "has" : "have"} no values for this account` +
+            (o.as_of ? `, as of ${String(o.as_of).slice(0, 10)}.` : ". Filtering by them returns nothing, which is not the same as no data existing."),
+        );
+      }
+      return { structured: o, text: parts.join(" ") };
     },
   },
+
 ];
 
 export const SAVINGS_TOOLS: ToolDef[] = [
-  {
+{
     name: "list_savings_opportunities",
     title: "Cost-savings opportunities",
     description:
@@ -450,8 +488,26 @@ export const VIEW_TOOLS: ToolDef[] = [
       } else {
         parts.push("View ran.");
       }
-      const groups = Object.keys((o.totals ?? {}) as Record<string, unknown>).length;
-      if (groups) parts.push(`${groups} group(s).`);
+      // Zero groups are not pruned server-side, and pruning them here would be
+      // worse than leaving them: a group at 0.00 is a real row in the bill (a
+      // free-tier service, or charges a credit exactly cancelled), and dropping
+      // it silently would make "we use 28 services" out of an account using 40.
+      // Naming the count is the honest version — the reader can leave them off a
+      // chart knowing what they left off.
+      const totals = (o.totals ?? {}) as Record<string, unknown>;
+      const names = Object.keys(totals);
+      const zero = names.filter((n) => totals[n] === 0).length;
+      const negative = names.filter((n) => typeof totals[n] === "number" && (totals[n] as number) < 0).length;
+      if (names.length) {
+        parts.push(
+          `${names.length} group(s)` +
+            (zero ? `, ${zero} at exactly 0.00 — real rows carrying no spend in this window, not missing data` : "") +
+            ".",
+        );
+      }
+      if (negative) {
+        parts.push(`${negative} group(s) are net negative: credits or refunds exceeding charges, not a spend figure.`);
+      }
       return { structured: o, text: parts.join(" ") + freshnessNote(o.data_freshness, range.end) };
     },
   },

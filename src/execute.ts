@@ -7,7 +7,7 @@ import { findAction, isBlockedAction, searchActions } from "./catalog.js";
 import { getValidAccessToken } from "./auth.js";
 import { buildQueryString, substitutePath } from "./request.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, STATIC_JWT_OVERRIDE } from "./config.js";
-import { apiThrottle } from "./throttle.js";
+import { apiConcurrency, apiThrottle } from "./throttle.js";
 import { ProjectOptions, projectBody, redact } from "./project.js";
 import { RESPONSE_POLICY } from "./shapes.js";
 
@@ -92,9 +92,19 @@ export async function requestWithRetry(
       // Inside the retry loop on purpose: a retry is another request against the
       // same backend, and a 5xx-driven retry storm is precisely what we bound.
       await apiThrottle.take(opts.signal);
-      const timeout = AbortSignal.timeout(timeoutMs);
-      const signal = opts.signal ? anySignal([timeout, opts.signal]) : timeout;
-      const res = await fetch(url, { ...init, signal });
+      // The slot is held across the fetch, not just its start: the point is to
+      // bound how many requests are sitting on the backend at once, which the
+      // rate bucket above does not do.
+      //
+      // The per-attempt timeout starts INSIDE the slot. Started outside, a
+      // request that queued behind three others would spend its whole budget
+      // waiting and then time out without ever having been sent — a queue that
+      // manufactures the failures it exists to prevent.
+      const res = await apiConcurrency.run(() => {
+        const timeout = AbortSignal.timeout(timeoutMs);
+        const signal = opts.signal ? anySignal([timeout, opts.signal]) : timeout;
+        return fetch(url, { ...init, signal });
+      });
       if (isTransientStatus(res.status) && attempt < maxRetries) {
         await sleep(backoff(attempt));
         continue;
@@ -232,6 +242,45 @@ function isNonEmpty(v: unknown): boolean {
   return true;
 }
 
+/**
+ * Find a container the shape meant to keep but that projected to nothing.
+ *
+ * The whole-body check below only fires when everything collapses. A single
+ * field collapsing inside a body whose siblings survived is worse, because it
+ * looks like a healthy response with one honestly-empty field: `facets.resolve`
+ * shipped with `dimensions: "map"` against a map of objects, so every call
+ * returned a valid-looking body reporting that the account had no dimensions at
+ * all. Same defect as views.list, one level down and therefore invisible to the
+ * check that caught views.list.
+ *
+ * Returns the dot-path of the first collapse, or undefined.
+ */
+function findCollapse(input: unknown, out: unknown, path = ""): string | undefined {
+  const isContainer = (v: unknown): boolean => v !== null && typeof v === "object";
+
+  if (Array.isArray(out)) {
+    if (!Array.isArray(input)) return undefined;
+    for (let i = 0; i < out.length; i++) {
+      const here = `${path}[${i}]`;
+      if (isContainer(out[i]) && !isNonEmpty(out[i]) && isContainer(input[i]) && isNonEmpty(input[i])) return here;
+      const deeper = findCollapse(input[i], out[i], here);
+      if (deeper) return deeper;
+    }
+    return undefined;
+  }
+
+  if (!isContainer(out) || !isContainer(input)) return undefined;
+  const inObj = input as Record<string, unknown>;
+  for (const [k, ov] of Object.entries(out as Record<string, unknown>)) {
+    const iv = inObj[k];
+    const here = path ? `${path}.${k}` : k;
+    if (isContainer(ov) && !isNonEmpty(ov) && isContainer(iv) && isNonEmpty(iv)) return here;
+    const deeper = findCollapse(iv, ov, here);
+    if (deeper) return deeper;
+  }
+  return undefined;
+}
+
 export function shapeResponse(actionId: string, parsed: unknown): unknown {
   const policy = RESPONSE_POLICY[actionId];
   const opts: ProjectOptions | undefined = SHAPE_AUDIT ? { dropped: new Set<string>() } : undefined;
@@ -261,6 +310,21 @@ export function shapeResponse(actionId: string, parsed: unknown): unknown {
     return {
       error: `The response shape for "${actionId}" does not match what the API returned, so no data survived. This is a bug in this server, not an empty result — do not report it as "none found".`,
     };
+  }
+
+  // Partial collapse. Serving the surviving half is not the safe option here:
+  // the half that vanished is reported onward as "this account has none", which
+  // is a confident wrong answer with nothing anywhere to contradict it.
+  if (policy.kind === "allowlist") {
+    const collapsed = findCollapse(parsed, out);
+    if (collapsed) {
+      process.stderr.write(
+        `cloudyali-mcp: response shape for "${actionId}" emptied "${collapsed}"; the field exists in the body but nothing survived projection.\n`,
+      );
+      return {
+        error: `The response shape for "${actionId}" does not fit the field "${collapsed}": the API returned data there and none of it survived. This is a bug in this server, not an empty result — do not report "${collapsed}" as empty or absent.`,
+      };
+    }
   }
 
   if (opts?.dropped?.size) {

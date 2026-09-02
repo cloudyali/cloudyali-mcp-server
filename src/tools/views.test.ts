@@ -152,3 +152,36 @@ describe("the view tools stay read-only", () => {
     expect(names).not.toMatch(/create_cost_view|update_cost_view|delete_cost_view|save_cost_view/);
   });
 });
+
+describe("zero and negative groups are named, not pruned and not passed over", () => {
+  const t = tool("run_cost_view");
+
+  // Reported from a live run: the cost-by-service view listed Azure "Bandwidth"
+  // and AWSEvents at exactly zero. Pruning them here would be data loss — a
+  // zero group is a service that appears in the bill — but saying nothing lets
+  // them be read as spend, and plotted as flat lines nobody can explain.
+  it("counts the groups sitting at exactly zero", () => {
+    const out = t.present!(
+      { view_total: 100, totals: { EC2: 100, Bandwidth: 0, AWSEvents: 0 } },
+      { id: "v1" },
+    );
+    expect(out.text).toMatch(/3 group\(s\), 2 at exactly 0\.00/);
+    expect(out.text).toMatch(/not missing data/);
+    // The rows themselves survive: the model can still see which services.
+    expect((out.structured.totals as Record<string, number>).Bandwidth).toBe(0);
+  });
+
+  it("says nothing about zeros when there are none", () => {
+    const out = t.present!({ view_total: 100, totals: { EC2: 100 } }, { id: "v1" });
+    expect(out.text).toMatch(/1 group\(s\)\./);
+    expect(out.text).not.toMatch(/at exactly/);
+  });
+
+  // A negative group is a credit, and "-40" reported as a service's cost is the
+  // kind of number that ends up in a slide.
+  it("flags net-negative groups as credits rather than spend", () => {
+    const out = t.present!({ view_total: 60, totals: { EC2: 100, Credits: -40 } }, { id: "v1" });
+    expect(out.text).toMatch(/net negative/);
+    expect(out.text).toMatch(/not a spend figure/);
+  });
+});

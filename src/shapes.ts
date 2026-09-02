@@ -262,6 +262,17 @@ export const RESPONSE_POLICY: Readonly<Record<string, ResponsePolicy>> = {
   "inventory.get": { kind: "allowlist", shape: RESOURCE },
   "inventory.stats": { kind: "redact", reason: "counts keyed by provider and resource type; keys are data, not a fixed schema" },
   "inventory.tag_keys": { kind: "allowlist", shape: { keys: "value", tags: "value", total: "value", limit: "value" } },
+  // dimensions is keyed by dimension name — data, not a fixed field list — and
+  // each value is an object. A bare "map" here kept the keys and emptied every
+  // value, so every call reported no dimensions at all.
+  "facets.resolve": {
+    kind: "allowlist",
+    shape: {
+      domain: "value",
+      as_of: "value",
+      dimensions: { "*": { values: [{ value: "value", label: "value", status: "value" }], truncated: "value" } },
+    },
+  },
   // --- Cost views -----------------------------------------------------------
   // query_spec is dropped: it is an internal query DSL as a raw JSON blob, and a
   // model runs a view by id rather than by reading its compiled definition.

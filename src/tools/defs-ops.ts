@@ -132,7 +132,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
     openWorld: true,
     inputSchema: obj({
       cloud_provider: arrOf(enumStr("Cloud provider", PROVIDERS), "Filter by cloud provider."),
-      resource_type: arrOf(str("Resource type, e.g. AWS::EC2::Instance."), "Filter by resource type. Discover valid values with list_inventory_facets."),
+      resource_type: arrOf(str("Resource type, e.g. AWS::EC2::Instance."), "Filter by resource type. Discover valid values with resolve_facets (domain 'inventory')."),
       region: arrOf(str("Region code, e.g. us-east-1."), "Filter by region."),
       account_id: arrOf(str("Account / subscription / project ID."), "Filter by account."),
       state: enumStr("Resource state. Default 'all', which includes deleted resources.", ["active", "deleted", "all"]),
@@ -152,7 +152,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
           listSummary("resources", rows, {
             total: o.total,
             emptyHint:
-              "Check the resource_type and region spellings with list_inventory_facets, or set state to 'all'. Note that tag operators outside the documented set are ignored rather than rejected.",
+              "Check the resource_type and region spellings with resolve_facets (domain 'inventory'), or set state to 'all'. Note that tag operators outside the documented set are ignored rather than rejected.",
           }) + truncationNote(rows, o.total, args.limit ?? 50) + ageCaveat(rows),
       };
     },
@@ -313,41 +313,26 @@ export const INVENTORY_TOOLS: ToolDef[] = [
   },
 
   {
-    name: "list_inventory_facets",
-    title: "Discover valid inventory filter values",
+    name: "list_tag_keys",
+    title: "Tag keys in use across the inventory",
     description:
-      "The providers, resource types, regions, accounts or tag keys present in the inventory. Call this before filtering list_resources — a misspelled resource type returns an empty result that looks like a real answer. For the values of one tag key, use list_tag_values.",
+      "Every distinct tag key present on resources. Tag keys are the one inventory dimension resolve_facets does not carry (the key set is unbounded; its other dimensions are not), so this is the way to find them. For the values under one key, use list_tag_values. For providers, resource types, regions or accounts, use resolve_facets with domain 'inventory'.",
     openWorld: true,
-    inputSchema: obj(
-      {
-        facet: enumStr("Which vocabulary to return.", ["providers", "resource_types", "regions", "accounts", "tag_keys"]),
-        provider: enumStr("Optional provider filter. Applies to tag_keys only.", PROVIDERS),
-        limit: int("Maximum values, for tag_keys. Default 100, max 1000.", { minimum: 1, maximum: 1000 }),
-      },
-      ["facet"],
-    ),
-    call: (a) => {
-      const facet = String(a.facet);
-      const action = {
-        providers: "inventory.providers",
-        resource_types: "inventory.types",
-        regions: "inventory.regions",
-        accounts: "inventory.accounts",
-        tag_keys: "inventory.tag_keys",
-      }[facet];
-      return {
-        action: action ?? "inventory.providers",
-        query_params: facet === "tag_keys" ? { limit: a.limit } : undefined,
-      };
-    },
+    inputSchema: obj({
+      limit: int("Maximum keys returned. Default 100, max 1000.", { minimum: 1, maximum: 1000 }),
+    }),
+    call: (a) => ({ action: "inventory.tag_keys", query_params: { limit: a.limit } }),
     present: (body, args) => {
       const o = (body ?? {}) as Record<string, unknown>;
-      const rows = rowsOf(body, "providers", "types", "regions", "accounts", "keys", "tags");
+      const rows = rowsOf(body, "keys", "tags");
+      const asked = typeof args.limit === "number" ? args.limit : 100;
+      const capped = rows.length >= asked ? ` This is the first ${rows.length}, not necessarily all of them — raise limit to see more.` : "";
       return {
         structured: o,
-        text: listSummary(`${args.facet} values`, rows, {
-          emptyHint: "Nothing is recorded for that facet yet — inventory may not have synced.",
-        }),
+        text:
+          listSummary("tag keys", rows, {
+            emptyHint: "No tags are recorded on any resource yet — inventory may not have synced, or nothing is tagged.",
+          }) + capped,
       };
     },
   },
@@ -356,7 +341,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
     name: "list_tag_values",
     title: "Values seen for one tag key",
     description:
-      "Distinct values observed for a single tag key. Use list_inventory_facets with facet 'tag_keys' to find the key names first.",
+      "Distinct values observed for a single tag key. Use list_tag_keys to find the key names first.",
     openWorld: true,
     inputSchema: obj(
       {
@@ -377,7 +362,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
       return {
         structured: o,
         text: listSummary(`values for tag "${args.key}"`, rows, {
-          emptyHint: "Check the key spelling with list_inventory_facets — tag keys are case-sensitive.",
+          emptyHint: "Check the key spelling with list_tag_keys — tag keys are case-sensitive.",
         }),
       };
     },
@@ -386,7 +371,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
 
 // --- Tag governance ---------------------------------------------------------
 //
-// Discovery (which tag keys exist) was already reachable via list_inventory_facets
+// Discovery (which tag keys exist) was already reachable via list_tag_keys
 // and list_tag_values. Governance was not: "how much of my spend is untagged",
 // "what does env=prod cost", "who is spelling it Environment". The console has a
 // whole page on these endpoints; the MCP had none of it.

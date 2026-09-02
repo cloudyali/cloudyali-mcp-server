@@ -407,4 +407,33 @@ describe("a shape that does not fit its body is reported, not returned as empty"
       expect(out?.error, JSON.stringify(empty)).toBeUndefined();
     }
   });
+
+  // The views.list guard only fires when the WHOLE body collapses. facets.resolve
+  // shipped with `dimensions: "map"` against a map of objects: domain and as_of
+  // survived, dimensions emptied, and the result was a well-formed body saying
+  // the account had no filterable dimensions at all. Half-right is the dangerous
+  // half here — it reads as an answer.
+  it("catches a single field collapsing inside an otherwise healthy body", () => {
+    const out = shapeResponse("facets.resolve", {
+      domain: "cost",
+      as_of: "2026-08-31T00:00:00Z",
+      dimensions: { service: { values: [{ value: "AmazonEC2", status: "active" }], truncated: false } },
+    }) as { error?: string };
+    expect(out.error).toBeUndefined();
+  });
+
+  it("names the field that emptied so the fix has an address", () => {
+    const out = shapeResponse("budgets.get", {
+      name: "prod",
+      amount: 100,
+      filters: [{ id: 1, budgetId: 2 }],
+    }) as { error?: string };
+    expect(out.error).toMatch(/filters\[0\]/);
+    expect(out.error).toMatch(/do not report .* as empty or absent/);
+  });
+
+  it("still leaves a real empty container alone", () => {
+    const out = shapeResponse("budgets.get", { name: "prod", amount: 100, filters: [] }) as { error?: string };
+    expect(out.error).toBeUndefined();
+  });
 });

@@ -542,6 +542,23 @@ export const CATALOG: Action[] = [
     },
     readOnly: true,
   },
+  {
+    id: "facets.resolve",
+    method: "POST",
+    path: "/v1/facets",
+    category: "cost",
+    summary: "Filter vocabulary for a domain, narrowed by what is already selected",
+    description:
+      "Every dimension a domain offers with the values it actually has for this account, narrowed by the selections already made. Covers cost, inventory, anomalies and savings from one endpoint. A dimension the domain does not have is a 400, not a silent no-op.",
+    bodyParams: {
+      domain: { type: "string", description: "cost | inventory | anomalies | savings.", required: true },
+      period: { type: "object", description: '{"from","to"} RFC3339, UTC only. Omit for all available history.' },
+      selected: { type: "object", description: "Dimension -> chosen values. Narrows the others." },
+      dimensions: { type: "array", description: "Limit the answer to these dimensions. Omit for all." },
+      search: { type: "object", description: "Dimension -> substring, to reach values past the cap. Cost domain only." },
+    },
+    readOnly: true,
+  },
   // --- Cost views -----------------------------------------------------------
   // A saved view is a question someone already decided was worth asking, which
   // makes it a better fit for this server than most raw endpoints. Read paths

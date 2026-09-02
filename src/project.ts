@@ -21,10 +21,21 @@
  *
  *   "value"    keep primitives (and arrays of primitives). Objects are dropped.
  *   "map"      keep a flat object of primitive values, e.g. resource tags.
+ *   { "*": s } the keys are data (dimension names, ids) and unknowable here;
+ *              apply `s` to every value. Distinct from "map", which only keeps
+ *              primitives — a facets response is a map whose values are objects,
+ *              and "map" silently emptied it.
  *   { … }      keep exactly these keys, recursing into each.
  *   [shape]    the value is an array; apply `shape` to every element.
  */
 export type Shape = "value" | "map" | { readonly [key: string]: Shape } | readonly [Shape];
+
+/** A wildcard shape `{ "*": … }` — unknown keys, known value shape. */
+function wildcardOf(shape: Shape): Shape | undefined {
+  if (typeof shape !== "object" || Array.isArray(shape)) return undefined;
+  const keys = Object.keys(shape as Record<string, Shape>);
+  return keys.length === 1 && keys[0] === "*" ? (shape as Record<string, Shape>)["*"] : undefined;
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -89,6 +100,21 @@ export function project(input: unknown, shape: Shape, opts?: ProjectOptions, pat
     return input.map((item, i) => project(item, elem, opts, `${path}[${i}]`));
   }
 
+  // Wildcard object shape: every key is data, every value takes the same shape.
+  const wild = wildcardOf(shape);
+  if (wild !== undefined) {
+    if (!isPlainObject(input)) {
+      if (input !== undefined && input !== null) note(opts, path);
+      return input === null ? null : undefined;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(input)) {
+      const projected = project(v, wild, opts, path ? `${path}.${k}` : k);
+      if (projected !== undefined) out[k] = projected;
+    }
+    return out;
+  }
+
   // Object shape.
   if (!isPlainObject(input)) {
     if (input !== undefined && input !== null) note(opts, path);
@@ -109,10 +135,9 @@ export function project(input: unknown, shape: Shape, opts?: ProjectOptions, pat
 }
 
 /**
- * Project a whole response body, tolerating the two envelope shapes the
- * CloudYali API actually uses: a bare object/array, or `{ data: … }`.
+ * Project a whole response body.
  *
- * A body that is neither (an HTML error page, a bare string) is replaced with a
+ * A non-JSON body (an HTML error page, a bare string) is replaced with a
  * short marker rather than relayed — an unrecognised body is exactly the case
  * where passing it through is most likely to leak something.
  */

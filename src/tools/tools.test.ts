@@ -28,7 +28,7 @@ import { obj, str, int, enumStr, arrOf, listSummary, truncationNote } from "./ty
 // Minimal required args per tool, so the sweep tests can exercise call().
 const SAMPLE: Record<string, Record<string, unknown>> = {
   get_cost_breakdown: { start_time: "2026-08-01T00:00:00Z", end_time: "2026-08-31T00:00:00Z" },
-  list_filter_values: { start_date: "2026-08-01T00:00:00Z", end_date: "2026-08-31T00:00:00Z" },
+  resolve_facets: { domain: "cost" },
   get_savings_opportunity: { id: 1 },
   get_budget: { id: 1 },
   get_budget_history: { id: 1 },
@@ -38,7 +38,6 @@ const SAMPLE: Record<string, Record<string, unknown>> = {
   get_resource: { id: "i-0abc123" },
   get_resource_costs: { resource_ids: ["i-0abc123"] },
   get_resource_history: { cloud_provider: "aws", resource_id: "i-0abc", account_id: "123456789012" },
-  list_inventory_facets: { facet: "providers" },
   list_tag_values: { key: "env" },
 };
 
@@ -210,7 +209,7 @@ describe("callTool", () => {
     const res = await callTool(TOOL_BY_NAME.get("list_resources")!, {});
     const text = String((res.content as Array<{ text: string }>)[0].text);
     expect(text).toMatch(/No resources matched/);
-    expect(text).toMatch(/list_inventory_facets/);
+    expect(text).toMatch(/resolve_facets/);
   });
 
   it("says so when a page is a subset, rather than letting the model assume completeness", async () => {

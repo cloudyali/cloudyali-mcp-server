@@ -9,7 +9,7 @@ import type { ToolDef } from "./types.js";
 
 const ARGS: Record<string, Record<string, unknown>> = {
   get_cost_breakdown: { start_time: "2026-08-01T00:00:00Z", end_time: "2026-08-31T00:00:00Z" },
-  list_filter_values: { start_date: "2026-08-01T00:00:00Z", end_date: "2026-08-31T00:00:00Z" },
+  resolve_facets: { domain: "cost" },
   get_savings_opportunity: { id: 1 },
   get_budget: { id: 1 },
   get_budget_history: { id: 1 },
@@ -19,7 +19,6 @@ const ARGS: Record<string, Record<string, unknown>> = {
   get_resource: { id: "i-0abc123" },
   get_resource_costs: { resource_ids: ["i-0abc123"] },
   get_resource_history: { cloud_provider: "aws", resource_id: "i-0abc", account_id: "123456789012" },
-  list_inventory_facets: { facet: "providers" },
   list_tag_values: { key: "env" },
   query_costs: { group_by_dimensions: ["service"] },
 };
@@ -146,7 +145,7 @@ describe("empty results are directed, not just zero", () => {
     "list_resources",
     "search_resources",
     "get_resource_history",
-    "list_inventory_facets",
+    "list_tag_keys",
     "list_tag_values",
   ];
 
@@ -314,10 +313,35 @@ describe("numbers that matter reach the summary", () => {
     expect(t.present!({ summary: { total: 987.65 } }, {}).text).toContain("987.65");
   });
 
-  it("list_filter_values reports how many values each dimension has", () => {
-    const t = TOOL_DEFS.find((d) => d.name === "list_filter_values")!;
-    const out = t.present!({ services: ["a", "b"], regions: ["c"] }, {});
-    expect(out.text).toMatch(/services: 2/);
-    expect(out.text).toMatch(/regions: 1/);
+  const v = (value: string) => ({ value, label: null, status: "active" });
+
+  it("resolve_facets reports how many values each dimension has", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "resolve_facets")!;
+    const out = t.present!(
+      { domain: "cost", dimensions: { service: { values: [v("a"), v("b")] }, region: { values: [v("c")] } } },
+      { domain: "cost" },
+    );
+    expect(out.text).toMatch(/service: 2/);
+    expect(out.text).toMatch(/region: 1/);
+  });
+
+  // A capped list read as the whole vocabulary is how a model concludes a real
+  // value "does not exist for this account". The `+` alone does not say that.
+  it("resolve_facets says a truncated list is not the whole vocabulary", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "resolve_facets")!;
+    const out = t.present!(
+      { domain: "cost", dimensions: { service: { values: [v("a")], truncated: true } } },
+      { domain: "cost" },
+    );
+    expect(out.text).toMatch(/service: 1\+/);
+    expect(out.text).toMatch(/not all the values/);
+  });
+
+  // Empty is the other half: zero reachable values is a fact about this account,
+  // not an error, and filtering by one of them is what produces a false zero.
+  it("resolve_facets distinguishes an empty dimension from missing data", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "resolve_facets")!;
+    const out = t.present!({ domain: "savings", dimensions: { region: { values: [] } } }, { domain: "savings" });
+    expect(out.text).toMatch(/no values for this account/);
   });
 });

@@ -114,8 +114,8 @@ dropped, and you get **unfiltered provider-wide data** that looks like a valid
 answer. If a number looks too large, suspect the filter before suspecting the
 data.
 
-Discover valid values for a dimension with \`list_filter_values\`; they are
-account-specific.
+Discover valid values for a dimension with \`resolve_facets\`; they are
+account-specific, and the answer narrows as you add selections.
 
 ## Inventory tag filters are a separate grammar
 

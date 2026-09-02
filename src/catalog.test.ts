@@ -4,7 +4,6 @@ import { Action, CATALOG, READ_ONLY_CATALOG, findAction, isBlockedAction, search
 
 // Minimal required args for the tools whose call() reads them.
 const SAMPLE: Record<string, Record<string, unknown>> = {
-  list_inventory_facets: { facet: "providers" },
 };
 
 function makeAction(overrides: Partial<Action>): Action {
