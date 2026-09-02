@@ -82,6 +82,25 @@ describe("MCP resources", () => {
     for (const hex of quoted) expect(known, `${hex} is in the guide but not in the theme`).toContain(hex);
   });
 
+  it("bounds the source line to scope, estimates and window", () => {
+    // The failure this pins: a report footer that read "CloudYali savings engine + AWS Cost
+    // Optimization Hub ... the savings engine does not yet emit these findings itself". That is
+    // a product roadmap disclosure in a document that was shared by link. The rule has to draw
+    // the line explicitly, because the over-correction (say nothing, so the reader cannot tell
+    // an estimate from a billed figure) is its own failure.
+    const guide = readResource("cloudyali://design").text;
+    expect(guide).toMatch(/scope and reliability, never machinery/i);
+    expect(guide).toMatch(/estimates? rather than billed/i);
+    expect(guide).toMatch(/what window/i);
+    // The distinction, and the test for applying it.
+    expect(guide).toMatch(/how the system is built/i);
+    expect(guide).toMatch(/how much a number can be trusted/i);
+    expect(guide).toMatch(/changes what a reader would \*?do\*?/i);
+    // A worked before/after, because a rule without an example gets read as a vibe.
+    expect(guide).toMatch(/savings engine does not yet emit/);
+    expect(guide).toMatch(/point-in-time estimates/);
+  });
+
   it("states the three things every generated artifact must carry", () => {
     const guide = readResource("cloudyali://design").text;
     expect(guide).toMatch(/cloudyali:\/\/brand-mark/);

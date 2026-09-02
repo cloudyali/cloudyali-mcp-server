@@ -112,6 +112,43 @@ Three things, and only three. Keep it to one line each — this is a stamp, not 
 Anything else you want to say about the data — what it covers, what it excludes, which figures are
 not comparable — goes in the body or a short source line at the end, not in this stamp.
 
+## The source line: scope and reliability, never machinery
+
+Below the numbers, one short paragraph. It answers three questions and stops:
+
+1. **What is in and out of scope?** \`Open wastage findings only; rightsizing and Savings Plan
+   recommendations excluded.\`
+2. **Which figures are estimates rather than billed amounts, and on what basis?** \`The $12.40
+   secrets figure is an estimate: 31 × $0.40/mo list price.\`
+3. **What window does the data cover?**
+
+Then stop. It is a source line, not a methodology section.
+
+There is a real distinction to hold here, because over-correcting is its own failure. Two things
+look like "internal detail" and only one of them is:
+
+- **How the system is built** — which internal component produced a finding, what it does not yet
+  support, which upstream services were consulted, whether a section was assembled by hand. This
+  has no reader value and does not belong in an artifact that is one share away from being public.
+  \`the savings engine does not yet emit these findings itself\` is a product roadmap disclosure
+  wearing the costume of a footnote.
+- **How much a number can be trusted** — estimate versus billed, point-in-time versus continuously
+  monitored, a match made on an identifier versus inferred. This is exactly what the reader needs
+  and it stays.
+
+The test is whether removing it changes what a reader would *do*. Knowing a figure is an estimate
+changes what they do. Knowing which subsystem computed it does not.
+
+So the fix is almost always a reframe rather than a deletion — state the reliability, drop the
+organisational cause:
+
+> ✗ Azure and GCP findings come from a manual sweep of the CloudYali inventory against the bills —
+>   the savings engine does not yet emit these findings itself.
+>
+> ✓ Azure and GCP figures are point-in-time estimates.
+
+Same warning to the reader. None of the org chart.
+
 **And the part that carries real weight:** if a tool result carried a \`WARNING:\` line, that warning
 belongs in the artifact too, in the body, in full. The chart is exactly where such a caveat gets
 lost. Restate what the warning said; do not restate any explanation of *why* — the tools do not
