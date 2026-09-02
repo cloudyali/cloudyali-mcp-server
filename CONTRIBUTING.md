@@ -30,6 +30,29 @@ This project follows test-driven development (Red → Green → Refactor):
 Every behavior change ships with a test. Name tests after the behavior, not the
 implementation. Keep the suite green before opening a PR (`npm test`).
 
+## What may leave this server
+
+Everything that reaches a model — tool responses, tool descriptions, input schemas, resource bodies,
+warning strings, error text — states what the reader needs and never how the backend works. No
+internal component names, storage design, refresh cadence, table or column names, SQL, or internal
+identifiers. Include instead what changes a reader's behaviour: whether a figure is an estimate,
+whether two figures are comparable, how a record was matched.
+
+The test: does removing it change what a reader would *do*?
+
+Over-correcting is also a failure. A reader who cannot tell an estimate from a billed figure has
+been failed too. Reframe rather than delete — state the reliability, drop the cause.
+
+Two reasons this is enforced rather than advised. It has shipped twice, both times written by
+someone trying to be helpful; explaining the mechanism feels like generosity and reads from outside
+as a map. And this server reaches the API over HTTP like any other client, so it cannot keep such a
+claim true — the knowledge came from reading the backend, and nothing will tell it when that stops
+being accurate.
+
+`src/leak-scan.test.ts` enforces it and fails the build. **If you add a surface that reaches a
+model, add it to that scanner.** It also asserts the de-leaked text still carries the instructions
+that change behaviour, so it cannot be satisfied by saying nothing.
+
 ## Adding API actions
 
 The exposed surface is **read-only by construction**. To add an endpoint:
