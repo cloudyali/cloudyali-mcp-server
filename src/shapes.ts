@@ -262,6 +262,41 @@ export const RESPONSE_POLICY: Readonly<Record<string, ResponsePolicy>> = {
   "inventory.get": { kind: "allowlist", shape: RESOURCE },
   "inventory.stats": { kind: "redact", reason: "counts keyed by provider and resource type; keys are data, not a fixed schema" },
   "inventory.tag_keys": { kind: "allowlist", shape: { keys: "value", tags: "value", total: "value", limit: "value" } },
+  // --- Tag governance -------------------------------------------------------
+  "tags.coverage": {
+    kind: "allowlist",
+    shape: {
+      total_cost: "value", tagged_cost: "value", untagged_cost: "value", tagged_percentage: "value",
+      unique_tag_keys: "value", standard_tag_keys: "value",
+      prior_total_cost: "value", prior_tagged_cost: "value",
+      prior_untagged_cost: "value", prior_tagged_percentage: "value",
+    },
+  },
+  "tags.cost_by_tag": {
+    kind: "allowlist",
+    shape: {
+      total: "value",
+      data: [{ cloud_provider: "value", tag_key: "value", tag_value: "value", cost: "value", share_percentage: "value" }],
+    },
+  },
+  "tags.health": {
+    kind: "allowlist",
+    shape: {
+      total_affected: "value",
+      // `count` is nullable by design: null means the count query failed, 0 means it
+      // genuinely counted zero. Both pass through — collapsing them would turn a
+      // failure into a clean bill of health.
+      mismatched_keys: [{ standard_key: "value", actual_key: "value", count: "value" }],
+      affected_resources: [{
+        cloud_provider: "value", account: "value", service: "value",
+        service_display: "value", standard_key: "value", actual_key: "value", resource_id: "value",
+      }],
+    },
+  },
+  // StandardTag carries customer_id — the exact field the screenshot that started
+  // this project was showing. It is dropped here, along with the row's primary key
+  // and its audit columns: none of them tell a reader anything about the policy.
+  "tags.standard": { kind: "allowlist", shape: [{ key: "value", values: "value", status: "value" }] },
   "inventory.tag_values": { kind: "allowlist", shape: { key: "value", values: "value", total: "value", limit: "value" } },
   "inventory.providers": { kind: "allowlist", shape: { providers: "value" } },
   "inventory.types": {

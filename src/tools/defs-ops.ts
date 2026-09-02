@@ -383,3 +383,139 @@ export const INVENTORY_TOOLS: ToolDef[] = [
     },
   },
 ];
+
+// --- Tag governance ---------------------------------------------------------
+//
+// Discovery (which tag keys exist) was already reachable via list_inventory_facets
+// and list_tag_values. Governance was not: "how much of my spend is untagged",
+// "what does env=prod cost", "who is spelling it Environment". The console has a
+// whole page on these endpoints; the MCP had none of it.
+
+const tagWindow = {
+  start_date: isoDate("Window start, YYYY-MM-DD. Defaults to 30 days ago."),
+  end_date: isoDate("Window end, YYYY-MM-DD. Defaults to today."),
+  filters: arrOf(
+    { type: "object" },
+    "Cost filter groups, same grammar as the cost tools — see cloudyali://filters. Narrow to an account or provider to find where the untagged spend actually is.",
+  ),
+};
+
+const pct = (v: unknown) => (typeof v === "number" ? `${v.toFixed(1)}%` : "unknown");
+const usd = (v: unknown) => (typeof v === "number" ? `$${v.toFixed(2)}` : "unknown");
+
+export const TAG_TOOLS: ToolDef[] = [
+  {
+    name: "get_tag_coverage",
+    title: "How much spend carries tags",
+    description:
+      "Tagged vs untagged spend for a window, with the preceding window of equal length for comparison. Start here for 'how is our tagging doing' — then use get_cost_by_tag to see where the tagged money went, or get_tag_health to find near-miss keys.",
+    openWorld: true,
+    inputSchema: obj({ ...tagWindow }),
+    call: (a) => ({ action: "tags.coverage", body: a }),
+    present: (body) => {
+      const o = (body ?? {}) as Record<string, number | undefined>;
+      const now = o.tagged_percentage;
+      const before = o.prior_tagged_percentage;
+      const parts = [
+        `${pct(now)} of ${usd(o.total_cost)} carries a tag; ${usd(o.untagged_cost)} does not.`,
+      ];
+      // The direction matters more than the level: 60% is fine if it was 40%.
+      if (typeof now === "number" && typeof before === "number") {
+        const d = now - before;
+        parts.push(
+          Math.abs(d) < 0.05
+            ? `Flat against the previous period (${pct(before)}).`
+            : `${d > 0 ? "Up" : "Down"} ${Math.abs(d).toFixed(1)} points from ${pct(before)} in the previous period.`,
+        );
+      }
+      if (typeof o.unique_tag_keys === "number") {
+        parts.push(
+          `${o.unique_tag_keys} distinct tag keys in use against ${o.standard_tag_keys ?? 0} standard ones` +
+            (typeof o.standard_tag_keys === "number" && o.unique_tag_keys > o.standard_tag_keys * 3
+              ? " — a large gap usually means spelling drift rather than genuine variety; get_tag_health names the near-misses."
+              : "."),
+        );
+      }
+      return { structured: o as Record<string, unknown>, text: parts.join(" ") };
+    },
+  },
+
+  {
+    name: "get_cost_by_tag",
+    title: "Spend grouped by tag key and value",
+    description:
+      "Cost per tag key/value with each row's share of the total. query_costs cannot group by tag, so this is the only way to ask what a tag value costs — 'how much is team=platform', 'split by env'.",
+    openWorld: true,
+    inputSchema: obj({
+      ...tagWindow,
+      limit: int("Maximum rows.", { minimum: 1, maximum: 1000 }),
+      offset: int("Row offset, for paging.", { minimum: 0 }),
+    }),
+    call: (a) => ({ action: "tags.cost_by_tag", body: a }),
+    present: (body, args) => {
+      const o = (body ?? {}) as Record<string, unknown>;
+      const rows = rowsOf(body, "data");
+      return {
+        structured: o,
+        text:
+          listSummary("tag key/value pairs", rows, {
+            total: o.total,
+            emptyHint:
+              "No tagged spend in this window. Check the window and filters, then use get_tag_coverage — if tagged_cost is 0, the bills genuinely carry no tags rather than the query being wrong.",
+          }) + truncationNote(rows, o.total, (args.limit as number) ?? rows.length),
+      };
+    },
+  },
+
+  {
+    name: "get_tag_health",
+    title: "Near-miss tag keys and the resources carrying them",
+    description:
+      "Tag keys that almost match a standard one — Environment vs environment vs env — with the resources using each wrong spelling. This is where most 'untagged' spend actually goes: tagged, but under a key nothing groups by.",
+    openWorld: true,
+    inputSchema: obj({ ...tagWindow }),
+    call: (a) => ({ action: "tags.health", body: a }),
+    present: (body) => {
+      const o = (body ?? {}) as Record<string, unknown>;
+      const mismatches = rowsOf(body, "mismatched_keys") as Record<string, unknown>[];
+      const affected = rowsOf(body, "affected_resources");
+      if (mismatches.length === 0 && affected.length === 0) {
+        return { structured: o, text: "No near-miss tag keys found against the standard set." };
+      }
+      // `count` is null when the count query FAILED and 0 only when it genuinely
+      // counted zero — the API is explicit about this. Rendering null as 0 would
+      // turn a failure into a clean bill of health, which is the worst direction
+      // for the error to point.
+      const unknown = mismatches.filter((m) => m.count === null || m.count === undefined).length;
+      const parts = [
+        `${mismatches.length} near-miss key(s) against the standard set, affecting ${o.total_affected ?? affected.length} resource(s).`,
+      ];
+      if (unknown > 0) {
+        parts.push(
+          `${unknown} of them came back with no resource count — that is the count failing, NOT zero resources. Do not report those as clean.`,
+        );
+      }
+      return { structured: o, text: parts.join(" ") };
+    },
+  },
+
+  {
+    name: "list_standard_tags",
+    title: "The account's standard tag policy",
+    description:
+      "The tag keys this account has declared standard, the values each permits, and whether the rule is active. This is the yardstick get_tag_health measures against — read it before judging whether a key is wrong.",
+    openWorld: true,
+    inputSchema: obj({}),
+    call: () => ({ action: "tags.standard" }),
+    present: (body) => {
+      const rows = (Array.isArray(body) ? body : rowsOf(body, "tags")) as Record<string, unknown>[];
+      const active = rows.filter((r) => r.status === "active").length;
+      return {
+        structured: { tags: rows, total: rows.length },
+        text: rows.length
+          ? `${rows.length} standard tag key(s), ${active} active. get_tag_health compares actual keys against these.`
+          : "No standard tags defined. Without them get_tag_health has no yardstick and will report nothing — define them in the console first.",
+      };
+    },
+  },
+];

@@ -10,7 +10,7 @@ import { findAction, isBlockedAction } from "../catalog.js";
 import type { JSONSchema } from "./json-schema.js";
 import type { ToolDef } from "./types.js";
 import { BUDGET_TOOLS, COST_TOOLS, SAVINGS_TOOLS } from "./defs-cost.js";
-import { ANOMALY_TOOLS, INVENTORY_TOOLS } from "./defs-ops.js";
+import { ANOMALY_TOOLS, INVENTORY_TOOLS, TAG_TOOLS } from "./defs-ops.js";
 
 export const TOOL_DEFS: ToolDef[] = [
   ...COST_TOOLS,
@@ -18,6 +18,7 @@ export const TOOL_DEFS: ToolDef[] = [
   ...BUDGET_TOOLS,
   ...ANOMALY_TOOLS,
   ...INVENTORY_TOOLS,
+  ...TAG_TOOLS,
 ];
 
 export const TOOL_BY_NAME: ReadonlyMap<string, ToolDef> = new Map(TOOL_DEFS.map((t) => [t.name, t]));

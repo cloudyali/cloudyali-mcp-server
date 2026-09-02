@@ -21,7 +21,7 @@ export type Action = {
   id: string;
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string; // path under /v1, may contain :param placeholders
-  category: "cost" | "budgets" | "recommendations" | "anomalies" | "inventory";
+  category: "cost" | "budgets" | "recommendations" | "anomalies" | "inventory" | "tags";
   summary: string;
   description: string;
   pathParams?: Record<string, ParamShape>;
@@ -540,6 +540,68 @@ export const CATALOG: Action[] = [
       limit: { type: "integer", description: "Max values. Default 100, max 1000." },
       provider: { type: "string", description: "Optional cloud-provider filter." },
     },
+    readOnly: true,
+  },
+  // --- Tag governance -------------------------------------------------------
+  // The console has a whole Tag Governance page on these and the MCP had none of
+  // it: list_tag_values answers "which values exist", which is discovery, not
+  // governance. "How much of my spend is untagged, and who is worst" was
+  // unreachable.
+  {
+    id: "tags.coverage",
+    method: "POST",
+    path: "/v1/tags/analytics/coverage",
+    category: "tags",
+    summary: "Tagged vs untagged spend, with the prior period for comparison",
+    description:
+      "Total, tagged and untagged cost for a window, the tagged percentage, how many distinct tag keys are in use, and the same figures for the preceding window of equal length.",
+    bodyParams: {
+      start_date: { type: "string", description: "YYYY-MM-DD. Defaults to 30 days ago." },
+      end_date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+      filters: { type: "array", description: "Cost filter groups, same grammar as the cost tools." },
+    },
+    readOnly: true,
+  },
+  {
+    id: "tags.cost_by_tag",
+    method: "POST",
+    path: "/v1/tags/analytics/cost-by-tag",
+    category: "tags",
+    summary: "Spend broken down by tag key and value",
+    description:
+      "Cost per (provider, tag key, tag value) with each row's share of the total. The cost tools cannot group by tag, so this is the only way to ask what a tag value costs.",
+    bodyParams: {
+      start_date: { type: "string", description: "YYYY-MM-DD. Defaults to 30 days ago." },
+      end_date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+      filters: { type: "array", description: "Cost filter groups, same grammar as the cost tools." },
+      limit: { type: "integer", description: "Max rows." },
+      offset: { type: "integer", description: "Row offset, for paging." },
+    },
+    readOnly: true,
+  },
+  {
+    id: "tags.health",
+    method: "POST",
+    path: "/v1/tags/analytics/health",
+    category: "tags",
+    summary: "Keys that nearly match a standard tag, and the resources carrying them",
+    description:
+      "Near-miss tag keys (Environment vs environment vs env) against the standard tag set, with the resources using each wrong spelling.",
+    bodyParams: {
+      start_date: { type: "string", description: "YYYY-MM-DD. Defaults to 30 days ago." },
+      end_date: { type: "string", description: "YYYY-MM-DD. Defaults to today." },
+      filters: { type: "array", description: "Cost filter groups, same grammar as the cost tools." },
+    },
+    readOnly: true,
+  },
+  {
+    id: "tags.standard",
+    method: "GET",
+    path: "/v1/tags/standard",
+    category: "tags",
+    summary: "The customer's standard tag policy",
+    description:
+      "The tag keys this account has declared as standard, the values each permits, and whether the rule is active. This is the yardstick tags.health measures against.",
     readOnly: true,
   },
   {
