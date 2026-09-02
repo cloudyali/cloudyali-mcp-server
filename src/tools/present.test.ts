@@ -173,6 +173,50 @@ describe("empty results are directed, not just zero", () => {
     expect(out.text).toMatch(/does not record configuration history/i);
   });
 
+  it("warns when created_at is a first-seen time, and stays quiet when it is not", () => {
+    // This caveat used to live in cloudyali://glossary. Nothing referenced that resource, so
+    // nothing fetched it, so the warning never arrived — and a model reporting a first-seen
+    // timestamp as a creation date states a fabricated fact with full confidence. It now rides
+    // with the rows, and only speaks when a row is actually inexact.
+    for (const name of ["list_resources", "search_resources"]) {
+      const t = TOOL_DEFS.find((d) => d.name === name)!;
+      const inexact = t.present!(
+        { resources: [{ resource_id: "a", created_at_is_accurate: false }], total: 1 },
+        ARGS[name] ?? {},
+      );
+      expect(inexact.text, name).toMatch(/first-seen time in created_at/);
+      expect(inexact.text, name).toMatch(/do not report it as when the resource was created/);
+
+      const exact = t.present!(
+        { resources: [{ resource_id: "a", created_at_is_accurate: true }], total: 1 },
+        ARGS[name] ?? {},
+      );
+      expect(exact.text, `${name} should stay quiet`).not.toMatch(/first-seen/);
+    }
+  });
+
+  it("counts the inexact rows rather than tarring the whole page", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "list_resources")!;
+    const out = t.present!(
+      {
+        resources: [
+          { resource_id: "a", created_at_is_accurate: true },
+          { resource_id: "b", created_at_is_accurate: false },
+          { resource_id: "c", created_at_is_accurate: false },
+        ],
+        total: 3,
+      },
+      {},
+    );
+    expect(out.text).toMatch(/2 of these carry a first-seen time/);
+  });
+
+  it("get_resource carries the same caveat for a single record", () => {
+    const t = TOOL_DEFS.find((d) => d.name === "get_resource")!;
+    expect(t.present!({ resource_id: "a", created_at_is_accurate: false }, {}).text).toMatch(/first-seen/);
+    expect(t.present!({ resource_id: "a", created_at_is_accurate: true }, {}).text).not.toMatch(/first-seen/);
+  });
+
   it("get_resource_costs names a low-confidence match instead of burying it", () => {
     // A GKE cluster's cost is inferred from labels on the underlying Compute
     // Engine VMs. The number looks identical to a billed charge, and left in

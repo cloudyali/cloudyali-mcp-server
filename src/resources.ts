@@ -13,7 +13,6 @@ import { BRAND_MARK_SVG, ECHARTS_THEME } from "./brand/assets.js";
 import { DESIGN_MD } from "./brand/design-resource.js";
 
 const FILTERS_URI = "cloudyali://filters";
-const GLOSSARY_URI = "cloudyali://glossary";
 const DESIGN_URI = "cloudyali://design";
 const THEME_URI = "cloudyali://echarts-theme";
 const MARK_URI = "cloudyali://brand-mark";
@@ -127,34 +126,6 @@ Note \`equal\`, not \`equals\` — the cost API and the inventory API differ her
 and the wrong spelling is silently dropped rather than rejected.
 `;
 
-const GLOSSARY_MD = `# CloudYali terms
-
-**Opportunity** — a detected chance to save money on a specific resource. Has a
-lifecycle state (identified → acknowledged → in_progress → implemented, or
-ignored), a category, a risk level and an effort level. This MCP is read-only:
-it can list and read opportunities but cannot move them through the lifecycle.
-
-**Budget** — a spend target for a scope (accounts, services, tags) over a period,
-with alert thresholds. \`currentSpent\` is spend so far in the active period.
-
-**Anomaly** — a statistically unusual cost movement, carrying an expected cost, an
-actual cost, the impact in dollars, a deviation percentage and a z-score.
-
-**Cost type** — the line-item classification a charge falls under. AWS values
-include Usage, DiscountedUsage, Tax, Credit, Discount, Refund, Fee, RIFee and the
-SavingsPlan* family; GCP uses regular, tax, adjustment, rounding_error.
-
-**Resource state** — \`active\`, \`deleted\`, or \`all\`. The default is \`all\`,
-which **includes deleted resources**. Pass \`active\` when asking about what is
-running now, or counts will be higher than expected.
-
-**Timestamp caveat** — on inventory records, \`created_at\` is a true creation
-time only when \`created_at_is_accurate\` is true. For Azure, GCP and unmapped
-AWS types it is CloudYali's first-seen time, which is when the resource was
-discovered, not when it was created. Check the flag before stating a creation
-date.
-`;
-
 export const RESOURCES: Resource[] = [
   {
     uri: DESIGN_URI,
@@ -184,18 +155,10 @@ export const RESOURCES: Resource[] = [
       "How to build the filters argument for the cost tools, and the silent-drop failure mode to watch for. Read before constructing a filter.",
     mimeType: "text/markdown",
   },
-  {
-    uri: GLOSSARY_URI,
-    name: "CloudYali glossary",
-    description:
-      "What opportunities, budgets, anomalies and cost types mean in CloudYali, plus two defaults that surprise people.",
-    mimeType: "text/markdown",
-  },
 ];
 
 const BODIES: Record<string, { mimeType: string; text: string }> = {
   [FILTERS_URI]: { mimeType: "text/markdown", text: FILTERS_MD },
-  [GLOSSARY_URI]: { mimeType: "text/markdown", text: GLOSSARY_MD },
   [DESIGN_URI]: { mimeType: "text/markdown", text: DESIGN_MD },
   // Pretty-printed rather than minified: this gets read as much as it gets pasted, and a model
   // that can see the structure is less likely to invent a key that does not exist.

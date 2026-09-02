@@ -103,6 +103,26 @@ export const ANOMALY_TOOLS: ToolDef[] = [
   },
 ];
 
+/**
+ * `created_at` is a true creation time only where the record says so. For Azure, GCP and unmapped
+ * AWS types it is CloudYali's first-seen time — when the resource was discovered, not when it was
+ * made. A model that reports it as a creation date states a fabricated fact with full confidence,
+ * and the flag that would have stopped it sits unread in structured output.
+ *
+ * This used to live in a glossary resource. Nothing referenced it, so nothing fetched it, so it
+ * never arrived — a caveat you have to look up before you know you need it is a caveat that does
+ * not work. Here it rides along with the rows it applies to, and stays silent when they are exact.
+ */
+function ageCaveat(rows: unknown): string {
+  const list = Array.isArray(rows) ? rows : [];
+  const inexact = list.filter(
+    (r) => (r as Record<string, unknown>)?.created_at_is_accurate === false,
+  ).length;
+  if (inexact === 0) return "";
+  const which = inexact === list.length ? "These" : `${inexact} of these`;
+  return ` ${which} carry a first-seen time in created_at, not a real creation time — do not report it as when the resource was created.`;
+}
+
 export const INVENTORY_TOOLS: ToolDef[] = [
   {
     name: "list_resources",
@@ -133,7 +153,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
             total: o.total,
             emptyHint:
               "Check the resource_type and region spellings with list_inventory_facets, or set state to 'all'. Note that tag operators outside the documented set are ignored rather than rejected.",
-          }) + truncationNote(rows, o.total, args.limit ?? 50),
+          }) + truncationNote(rows, o.total, args.limit ?? 50) + ageCaveat(rows),
       };
     },
   },
@@ -168,7 +188,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
           listSummary("resources", rows, {
             total: o.total,
             emptyHint: "Try a shorter fragment, or drop the provider and type filters — search matches IDs, names, properties and tags.",
-          }) + truncationNote(rows, o.total, args.limit ?? 50),
+          }) + truncationNote(rows, o.total, args.limit ?? 50) + ageCaveat(rows),
       };
     },
   },
@@ -191,7 +211,10 @@ export const INVENTORY_TOOLS: ToolDef[] = [
       path_params: { id: a.id },
       query_params: a.provider ? { provider: a.provider } : undefined,
     }),
-    present: (body) => ({ structured: (body ?? {}) as Record<string, unknown>, text: "Resource detail returned." }),
+    present: (body) => {
+      const o = (body ?? {}) as Record<string, unknown>;
+      return { structured: o, text: "Resource detail returned." + ageCaveat([o]) };
+    },
   },
 
   {
