@@ -262,6 +262,46 @@ export const RESPONSE_POLICY: Readonly<Record<string, ResponsePolicy>> = {
   "inventory.get": { kind: "allowlist", shape: RESOURCE },
   "inventory.stats": { kind: "redact", reason: "counts keyed by provider and resource type; keys are data, not a fixed schema" },
   "inventory.tag_keys": { kind: "allowlist", shape: { keys: "value", tags: "value", total: "value", limit: "value" } },
+  // --- Cost views -----------------------------------------------------------
+  // query_spec is dropped: it is an internal query DSL as a raw JSON blob, and a
+  // model runs a view by id rather than by reading its compiled definition.
+  // created_at/updated_at are audit columns nobody reads.
+  "views.list": {
+    kind: "allowlist",
+    shape: [{ id: "value", name: "value", description: "value", collection_tags: "value", default_chart_type: "value", builtin: "value" }],
+  },
+  "views.run": {
+    kind: "allowlist",
+    shape: {
+      view_id: "value",
+      range: { days: "value", granularity: "value", start: "value", end: "value" },
+      cost_type: "value",
+      // {kind, field} — which dimension the group keys are. Needed to say what the
+      // groups mean; the keys themselves live in totals/series.
+      group_by: { kind: "value", field: "value" },
+      series: [{ day: "value", groups: "map" }],
+      totals: "map",
+      view_total: "value",
+      share_of_total: "value",
+      // The latest billing day actually present for this account in the window, or
+      // null when there is none. Partial ingestion shows up here as an earlier
+      // watermark rather than as an error, so this is the only field that can tell
+      // a reader the total is incomplete.
+      data_freshness: "value",
+    },
+  },
+  "views.detail": {
+    kind: "allowlist",
+    shape: {
+      view_id: "value",
+      range: { days: "value", granularity: "value", start: "value", end: "value" },
+      cost_type: "value",
+      // resource_id is null for resourceless line items and AI providers — a real
+      // value, not a gap. Passed through rather than dropped.
+      rows: [{ day: "value", group: "value", resource_id: "value", cost: "value" }],
+      pagination: { limit: "value", offset: "value", count: "value" },
+    },
+  },
   // --- Tag governance -------------------------------------------------------
   "tags.coverage": {
     kind: "allowlist",

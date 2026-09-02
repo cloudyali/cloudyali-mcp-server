@@ -9,7 +9,7 @@ import { executeActionRaw } from "../execute.js";
 import { findAction, isBlockedAction } from "../catalog.js";
 import type { JSONSchema } from "./json-schema.js";
 import type { ToolDef } from "./types.js";
-import { BUDGET_TOOLS, COST_TOOLS, SAVINGS_TOOLS } from "./defs-cost.js";
+import { BUDGET_TOOLS, COST_TOOLS, SAVINGS_TOOLS, VIEW_TOOLS } from "./defs-cost.js";
 import { ANOMALY_TOOLS, INVENTORY_TOOLS, TAG_TOOLS } from "./defs-ops.js";
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -19,6 +19,7 @@ export const TOOL_DEFS: ToolDef[] = [
   ...ANOMALY_TOOLS,
   ...INVENTORY_TOOLS,
   ...TAG_TOOLS,
+  ...VIEW_TOOLS,
 ];
 
 export const TOOL_BY_NAME: ReadonlyMap<string, ToolDef> = new Map(TOOL_DEFS.map((t) => [t.name, t]));
@@ -131,6 +132,13 @@ function checkValue(key: string, value: unknown, spec: JSONSchema): unknown {
     if (spec.type === "integer" && !Number.isInteger(value)) return fail(`expected a whole number.`);
     if (spec.minimum !== undefined && value < spec.minimum) return fail(`must be at least ${spec.minimum}.`);
     if (spec.maximum !== undefined && value > spec.maximum) return fail(`must be at most ${spec.maximum}.`);
+    // Numeric enums were unchecked until the cost-view `days` param needed one.
+    // Unchecked meant days:60 passed here and 400'd at the API — the argument
+    // looked accepted and the failure arrived from somewhere else, which is the
+    // slowest kind of wrong to diagnose.
+    if (spec.enum && !spec.enum.includes(value)) {
+      return fail(`got ${value}. Allowed: ${spec.enum.join(", ")}.`);
+    }
     return value;
   }
   // string

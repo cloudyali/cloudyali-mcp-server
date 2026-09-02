@@ -12,7 +12,10 @@ export type JSONSchema = {
   required?: string[];
   additionalProperties?: boolean;
   items?: JSONSchema;
-  enum?: string[];
+  // JSON Schema allows any JSON value here. days on the cost-view endpoints is an
+  // integer enum (7 | 30 | 90), so restricting this to strings would have forced
+  // either a wrong type on the wire or an unvalidated free integer.
+  enum?: (string | number)[];
   pattern?: string;
   minimum?: number;
   maximum?: number;

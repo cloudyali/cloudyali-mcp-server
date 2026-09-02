@@ -542,6 +542,52 @@ export const CATALOG: Action[] = [
     },
     readOnly: true,
   },
+  // --- Cost views -----------------------------------------------------------
+  // A saved view is a question someone already decided was worth asking, which
+  // makes it a better fit for this server than most raw endpoints. Read paths
+  // only: the definitions are global/CloudYali-managed, so the mutating routes
+  // edit what every customer sees.
+  {
+    id: "views.list",
+    method: "GET",
+    path: "/v1/views",
+    category: "cost",
+    summary: "The saved cost views available to this account",
+    description:
+      "Curated cost views: name, what each one covers, and its id for running. Definitions are CloudYali-managed and shared, not per-account.",
+    readOnly: true,
+  },
+  {
+    id: "views.run",
+    method: "POST",
+    path: "/v1/views/:id/results",
+    category: "cost",
+    summary: "Run a saved view over a window",
+    description:
+      "Runs a view's saved query for this account: daily series per group, per-group totals, the view total, its share of the whole bill, and the data-freshness watermark.",
+    pathParams: { id: { type: "string", description: "View id from views.list.", required: true } },
+    bodyParams: {
+      days: { type: "integer", description: "Window length. Exactly 7, 30 or 90 — any other value is rejected." },
+      granularity: { type: "string", description: "Time bucket: day, week or month. Default day." },
+    },
+    readOnly: true,
+  },
+  {
+    id: "views.detail",
+    method: "POST",
+    path: "/v1/views/:id/results/detail",
+    category: "cost",
+    summary: "Resource-grain rows behind a view",
+    description:
+      "The same view at resource grain: a paginated table of (day, group, resource_id, cost), ordered by cost. The drill-down behind the chart.",
+    pathParams: { id: { type: "string", description: "View id from views.list.", required: true } },
+    bodyParams: {
+      days: { type: "integer", description: "Window length. Exactly 7, 30 or 90." },
+      limit: { type: "integer", description: "Max rows." },
+      offset: { type: "integer", description: "Row offset, for paging." },
+    },
+    readOnly: true,
+  },
   // --- Tag governance -------------------------------------------------------
   // The console has a whole Tag Governance page on these and the MCP had none of
   // it: list_tag_values answers "which values exist", which is discovery, not

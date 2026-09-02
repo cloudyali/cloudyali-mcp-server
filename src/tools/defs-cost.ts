@@ -361,3 +361,135 @@ export const BUDGET_TOOLS: ToolDef[] = [
     },
   },
 ];
+
+
+// --- Cost views -------------------------------------------------------------
+//
+// A saved view is a question someone already decided was worth asking, and it
+// answers two things query_costs cannot: the share of the WHOLE bill (the view
+// carries its own denominator) and how fresh the underlying billing data is.
+
+/** days is a hard enum server-side — 7, 30 or 90. Anything else is a 400, not a clamp. */
+const viewDays = {
+  type: "integer" as const,
+  description: "Window length in days. Must be exactly 7, 30 or 90 — any other value is rejected outright, not rounded.",
+  enum: [7, 30, 90],
+};
+
+/**
+ * What the freshness watermark means for the number just reported.
+ *
+ * This is the only field in the whole server that can say a cost total is
+ * incomplete. Partial ingestion surfaces here as an earlier watermark and never
+ * as an error, so a half-ingested month otherwise reads as a real decline.
+ */
+function freshnessNote(freshness: unknown, end: unknown): string {
+  if (freshness === null || freshness === undefined) {
+    return " No billing data landed in this window at all — this is not a zero, it is an absence.";
+  }
+  if (typeof freshness !== "string" || typeof end !== "string") return "";
+  const latest = freshness.slice(0, 10);
+  // `end` is exclusive, so the last day the window covers is the day before it.
+  const lastDay = new Date(`${end}T00:00:00Z`);
+  lastDay.setUTCDate(lastDay.getUTCDate() - 1);
+  const expected = lastDay.toISOString().slice(0, 10);
+  if (latest >= expected) return "";
+  return ` Billing data only reaches ${latest}, short of the window's end (${expected}) — the total is incomplete, and a drop at the end of the series is missing data rather than reduced spend.`;
+}
+
+export const VIEW_TOOLS: ToolDef[] = [
+  {
+    name: "list_cost_views",
+    title: "Saved cost views",
+    description:
+      "The curated cost views available, with the id needed to run one. Check here before building a query by hand — if a view already answers the question, running it gives the answer plus its share of the total bill, which query_costs cannot.",
+    openWorld: true,
+    inputSchema: obj({}),
+    call: () => ({ action: "views.list" }),
+    present: (body) => {
+      const rows = (Array.isArray(body) ? body : rowsOf(body, "views")) as Record<string, unknown>[];
+      return {
+        structured: { views: rows, total: rows.length },
+        text: rows.length
+          ? `${rows.length} saved view(s): ${rows.map((v) => v.name).filter(Boolean).slice(0, 8).join(", ")}${rows.length > 8 ? ", …" : ""}. Run one with run_cost_view.`
+          : "No saved cost views. Build the query directly with query_costs or get_cost_breakdown.",
+      };
+    },
+  },
+
+  {
+    name: "run_cost_view",
+    title: "Run a saved view",
+    description:
+      "Runs a saved view for this account and returns the daily series by group, per-group totals, the view total, and what share of the entire bill it represents. Use get_cost_view_detail for the resources behind it.",
+    openWorld: true,
+    inputSchema: obj(
+      {
+        id: str("View id, from list_cost_views.", { minLength: 1 }),
+        days: viewDays,
+        granularity: enumStr("Time bucket. Default day.", ["day", "week", "month"]),
+      },
+      ["id"],
+    ),
+    call: (a) => ({ action: "views.run", path_params: { id: a.id }, body: { days: a.days, granularity: a.granularity } }),
+    present: (body) => {
+      const o = (body ?? {}) as Record<string, unknown>;
+      const range = (o.range ?? {}) as Record<string, unknown>;
+      const total = o.view_total;
+      const share = o.share_of_total;
+      const parts: string[] = [];
+      if (typeof total === "number") {
+        // The share is the reason to run a view rather than a query: the view
+        // carries the full-bill denominator, so "$4200" becomes "$4200, a third
+        // of the bill" — the version someone can act on.
+        parts.push(
+          typeof share === "number"
+            ? `View total ${total.toFixed(2)} over ${range.days ?? "?"} days — ${(share * (share <= 1 ? 100 : 1)).toFixed(1)}% of the whole bill.`
+            : `View total ${total.toFixed(2)} over ${range.days ?? "?"} days.`,
+        );
+      } else {
+        parts.push("View ran.");
+      }
+      const groups = Object.keys((o.totals ?? {}) as Record<string, unknown>).length;
+      if (groups) parts.push(`${groups} group(s).`);
+      return { structured: o, text: parts.join(" ") + freshnessNote(o.data_freshness, range.end) };
+    },
+  },
+
+  {
+    name: "get_cost_view_detail",
+    title: "Resources behind a saved view",
+    description:
+      "The same view at resource grain: (day, group, resource_id, cost) ordered by cost. The drill-down behind run_cost_view's chart.",
+    openWorld: true,
+    inputSchema: obj(
+      {
+        id: str("View id, from list_cost_views.", { minLength: 1 }),
+        days: viewDays,
+        limit: int("Max rows. Keep this small — the server's own ceiling is high enough to return more than anyone can read.", { minimum: 1, maximum: 1000 }),
+        offset: int("Row offset, for paging.", { minimum: 0 }),
+      },
+      ["id"],
+    ),
+    call: (a) => ({ action: "views.detail", path_params: { id: a.id }, body: { days: a.days, limit: a.limit, offset: a.offset } }),
+    present: (body) => {
+      const o = (body ?? {}) as Record<string, unknown>;
+      const rows = rowsOf(body, "rows") as Record<string, unknown>[];
+      const page = (o.pagination ?? {}) as Record<string, unknown>;
+      if (rows.length === 0) {
+        return { structured: o, text: "No rows for this view in that window. Try a longer days value, or run_cost_view first to confirm the view has any spend at all." };
+      }
+      // A null resource_id is a real answer — resourceless line items and the AI
+      // providers have none. Reported as its own category so it is not read as a
+      // lookup failure or quietly dropped from a sum.
+      const noResource = rows.filter((r) => r.resource_id === null || r.resource_id === undefined).length;
+      const parts = [`${rows.length} row(s) from offset ${page.offset ?? 0}.`];
+      if (noResource > 0) {
+        parts.push(
+          `${noResource} carry no resource id — that is expected for resourceless line items and AI provider spend, not a lookup failure. Keep them in any total.`,
+        );
+      }
+      return { structured: o, text: parts.join(" ") };
+    },
+  },
+];
