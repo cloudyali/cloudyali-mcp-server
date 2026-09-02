@@ -4,6 +4,7 @@ import { TOOL_DEFS } from "./tools/index.js";
 import { costWarningsFor } from "./filter-support.js";
 import { RESPONSE_POLICY } from "./shapes.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
+import { describeHttpFailure, describeTransportFailure } from "./errors.js";
 
 // The leak scanner (G13 in the hardening plan).
 //
@@ -68,6 +69,23 @@ function modelFacingText(): Array<[string, string]> {
     },
   ];
   cases.forEach((c, i) => out.push([`runtime warning #${i + 1}`, costWarningsFor(c)]));
+  // Failure messages are the surface most likely to reach for an explanation of
+  // what went wrong underneath, which is exactly the thing this file forbids.
+  // Exercised across every branch, with a body carrying the sort of text a
+  // misbehaving backend actually emits.
+  const leakyBody = {
+    code: "pq: relation \"cur_data_daily\" does not exist",
+    message: "materialized view refresh failed for customer_id 210",
+  };
+  for (const status of [400, 401, 403, 404, 408, 429, 500, 503, 418]) {
+    out.push([`http failure ${status}`, describeHttpFailure(status, leakyBody, "query_costs")]);
+    out.push([`http failure ${status} (bare)`, describeHttpFailure(status, undefined, "query_costs")]);
+  }
+  for (const code of ["ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "CERT_HAS_EXPIRED", "UNKNOWN"]) {
+    const e = new TypeError("fetch failed");
+    (e as { cause?: unknown }).cause = { code };
+    out.push([`transport failure ${code}`, describeTransportFailure(e, "https://api.example.com", "query_costs")]);
+  }
   // Redaction reasons ship inside the withheld-body notice, so they are model-facing too.
   for (const [action, policy] of Object.entries(RESPONSE_POLICY)) {
     if (policy.kind === "redact") out.push([`redact reason for ${action}`, policy.reason]);

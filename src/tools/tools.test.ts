@@ -225,11 +225,18 @@ describe("callTool", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("maps a non-2xx into an error result carrying the trimmed body", async () => {
+  it("turns a non-2xx into an instruction, not a status code and a JSON blob", async () => {
+    // This used to read `CloudYali returned HTTP 404. {"code":"not_found",...}`.
+    // A 404 that reads as an empty result becomes "you have no budgets", which
+    // is the same defect as a projection collapsing: a confident wrong answer.
     mockJson({ code: "not_found", message: "no such budget" }, 404);
     const res = await callTool(TOOL_BY_NAME.get("get_budget")!, { id: 99 });
     expect(res.isError).toBe(true);
-    expect(String((res.content as Array<{ text: string }>)[0].text)).toMatch(/404/);
+    const text = String((res.content as Array<{ text: string }>)[0].text);
+    expect(text).toContain("get_budget");
+    expect(text).toMatch(/NOT an empty result/);
+    expect(text).toMatch(/no such budget/);
+    expect(text).not.toMatch(/^\s*\{|\}\s*$/);
   });
 
   it("drops undefined query params rather than sending the string 'undefined'", async () => {

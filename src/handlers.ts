@@ -9,6 +9,8 @@ import { clearLogin, currentLogin, loginSuccessMessage, startLogin } from "./log
 import { executeAction } from "./execute.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, PORTAL_URL } from "./config.js";
 import { TOOL_BY_NAME, ToolArgError, callTool, toMcpTools } from "./tools/index.js";
+import { RateLimitedError } from "./throttle.js";
+import { describeTransportFailure, isTransportError } from "./errors.js";
 
 const RAW_TOOLS: Tool[] = [
   {
@@ -311,12 +313,28 @@ export async function handleToolCall(
         ],
       };
     }
+    // The client bucket, not CloudYali's. Its own message already says what to
+    // do, so do not bury it behind a bare "Error:".
+    if (err instanceof RateLimitedError) {
+      return { isError: true, content: [{ type: "text", text: `${name} was not sent. ${err.message}` }] };
+    }
+    if (isTransportError(err)) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: describeTransportFailure(err, CLOUDYALI_API_URL, name) }],
+      };
+    }
+    // Anything left is this server misbehaving, and saying so is more useful
+    // than a message that reads like the API's fault.
     return {
       isError: true,
       content: [
         {
           type: "text",
-          text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          text:
+            `${name} failed inside the CloudYali MCP server itself, before or after the API call: ` +
+            `${err instanceof Error ? err.message : String(err)}. This is a bug in this server, not a problem with ` +
+            `the question — rephrasing will not help, and there is no result to report.`,
         },
       ],
     };

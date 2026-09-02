@@ -125,12 +125,30 @@ describe("dispatch", () => {
     expect(textOf(res)).toMatch(/Hint: Call the `login` tool./);
   });
 
-  it("surfaces a generic failure without a stack trace", async () => {
+  it("names this server as the culprit when the failure is ours, without a stack trace", async () => {
+    // "Error: upstream exploded" was the whole message here. It reads like the
+    // API misbehaved, which sends the reader to check CloudYali's status page
+    // over a bug on this side.
     mockExecuteRaw.mockRejectedValue(new Error("upstream exploded"));
     const res = await handleToolCall("list_budgets", {});
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toBe("Error: upstream exploded");
+    expect(textOf(res)).toContain("list_budgets");
+    expect(textOf(res)).toMatch(/bug in this server/);
+    expect(textOf(res)).toMatch(/upstream exploded/);
     expect(textOf(res)).not.toMatch(/\.ts:\d+/);
+  });
+
+  it("tells a network failure apart from a bug, and names the URL it could not reach", async () => {
+    // Undici reports DNS failure, refused connections and TLS faults all as
+    // `TypeError: fetch failed`; the part that differs is on `cause`.
+    const err = new TypeError("fetch failed");
+    (err as { cause?: unknown }).cause = { code: "ENOTFOUND" };
+    mockExecuteRaw.mockRejectedValue(err);
+    const res = await handleToolCall("list_budgets", {});
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/did not resolve/);
+    expect(textOf(res)).toMatch(/https:\/\/\S+/);
+    expect(textOf(res)).not.toMatch(/bug in this server/);
   });
 });
 

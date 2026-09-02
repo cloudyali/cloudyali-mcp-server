@@ -80,6 +80,15 @@ function startStubApi() {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", () => {
+        // One path answers 4xx, so the failure message can be exercised over the
+        // whole protocol rather than in a unit test. It replies with the kind of
+        // body a backend explaining itself would send: a driver error and a
+        // tenant key. Both must be gone by the time the model sees it.
+        if (req.url.includes("/budgets/404404")) {
+          reply.writeHead(404, { "content-type": "application/json" });
+          reply.end(JSON.stringify({ code: "not_found", message: "no rows for customer_id 210 in mv_cur_data_daily" }));
+          return;
+        }
         reply.writeHead(200, { "content-type": "application/json" });
         reply.end(
           JSON.stringify({
@@ -292,13 +301,31 @@ async function main() {
   // `instructions` is the one thing here a client can push into a system prompt. Asserted on the
   // wire rather than in a unit test, because the failure that prompted it was precisely a rule
   // that was correct in a module and absent from the protocol.
+  // -- A failing tool has to come back as something a reader can act on -------
+  //
+  // This used to be `CloudYali returned HTTP 404. {"code":...}` — a status number
+  // and a JSON blob. A 404 read as an empty result becomes "you have no budgets",
+  // which is the same confident wrong answer a collapsed projection produces.
+  const failed = await client.call("tools/call", {
+    name: "get_budget",
+    arguments: { id: 404404 },
+  });
+  const failedText = textOf(failed);
+  assert(failed.result?.isError === true, "a 404 did not come back marked as an error");
+  assert(/NOT an empty result/.test(failedText), `404 message does not forbid reporting it as empty: ${failedText}`);
+  assert(/get_budget/.test(failedText), "404 message does not name the tool that failed");
+  assert(!/[{}]/.test(failedText), `error message dumped a JSON body: ${failedText}`);
+  for (const marker of ["customer_id", "mv_cur_data_daily", "210"]) {
+    assert(!failedText.includes(marker), `error message leaked "${marker}": ${failedText}`);
+  }
+
   const instructions = init.result?.instructions ?? "";
   assert(instructions.includes("cloudyali://design"), "initialize sent no pointer to the design resource");
   assert(/ECharts/.test(instructions), "initialize said nothing about ECharts");
   assert(/AI-generated/.test(instructions), "initialize said nothing about the artifact stamp");
 
   console.log("smoke: typed surface served, proxy hidden, filter + dataset warnings reach the model, no body leak");
-  console.log("smoke: design contract pushed in initialize; theme and brand mark readable over the protocol");
+  console.log("smoke: failures come back actionable and scrubbed; design contract pushed in initialize");
 
   // -- 6. The advanced hatch still opens ------------------------------------
   const adv = await boot({ ...apiEnv, CLOUDYALI_MCP_ADVANCED: "1" });

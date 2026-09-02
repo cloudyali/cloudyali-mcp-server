@@ -7,6 +7,7 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { executeActionRaw } from "../execute.js";
 import { findAction, isBlockedAction } from "../catalog.js";
+import { describeHttpFailure } from "../errors.js";
 import type { JSONSchema } from "./json-schema.js";
 import type { ToolDef } from "./types.js";
 import { BUDGET_TOOLS, COST_TOOLS, SAVINGS_TOOLS, VIEW_TOOLS } from "./defs-cost.js";
@@ -197,14 +198,12 @@ export async function callTool(
   });
 
   if (!res.ok) {
+    // The status number and a JSON blob told the reader nothing they could act
+    // on. describeHttpFailure says what happened, whose problem it is, and
+    // whether calling again is worth anything — see src/errors.ts.
     return {
       isError: true,
-      content: [
-        {
-          type: "text",
-          text: `CloudYali returned HTTP ${res.status}. ${JSON.stringify(res.body)}`,
-        },
-      ],
+      content: [{ type: "text", text: describeHttpFailure(res.status, res.body, def.name) }],
     };
   }
 

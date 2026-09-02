@@ -8,6 +8,7 @@ import { getValidAccessToken } from "./auth.js";
 import { buildQueryString, substitutePath } from "./request.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, STATIC_JWT_OVERRIDE } from "./config.js";
 import { apiConcurrency, apiThrottle } from "./throttle.js";
+import { scrubErrorText } from "./errors.js";
 import { ProjectOptions, projectBody, redact } from "./project.js";
 import { RESPONSE_POLICY } from "./shapes.js";
 
@@ -357,33 +358,6 @@ const ERROR_FIELD_ALLOWLIST = [
   "allowed_transitions",
   "missing",
 ] as const;
-
-// Field-level dropping is necessary but not sufficient: an upstream `message`
-// can carry the same content if someone wraps a driver error into one. These
-// patterns are checked on every error string that survives the allowlist, and a
-// match replaces the whole string rather than redacting part of it — a partial
-// redaction leaves you guessing which part was the sensitive half.
-const LEAKY_ERROR_PATTERNS: RegExp[] = [
-  /\bcolumn\s+"[^"]+"\s+does not exist/i,
-  /\brelation\s+"[^"]+"\s+does not exist/i,
-  /\bSQLSTATE\b/i,
-  /^\s*(pq|pgx|sql):/i,
-  /\b(SELECT|INSERT|UPDATE|DELETE)\b[^"]{0,80}\bFROM\b/i,
-  /goroutine \d+ \[/,
-  /\.go:\d+/,
-  /\b(dial tcp|connection refused|no such host)\b/i,
-  /\b[\w-]+\.(internal|local|svc\.cluster\.local)\b/i,
-  /(postgres(ql)?|redis|amqp):\/\//i,
-];
-
-function scrubErrorText(text: string): string {
-  for (const re of LEAKY_ERROR_PATTERNS) {
-    if (re.test(text)) {
-      return "The CloudYali API rejected this request. Check the arguments against the tool schema; if they look right, the endpoint may not support this combination.";
-    }
-  }
-  return text;
-}
 
 // trimErrorBody reduces a non-2xx backend body to the allowlisted error-contract
 // fields (review note, GA/public build): anything else — stack traces, driver
