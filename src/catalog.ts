@@ -625,7 +625,7 @@ export const CATALOG: Action[] = [
 // Make state changes via the portal at console.cloudyali.io.
 //
 // Path patterns that are always blocked, regardless of method or readOnly:
-export const BLOCKED_PATH_PATTERNS: RegExp[] = [
+const BLOCKED_PATH_PATTERNS: RegExp[] = [
   /^\/v\d+\/account(\/|$)/i,     // /v1/account, /v1/account/registration/job
   /^\/v\d+\/accounts(\/|$)/i,    // /v1/accounts, /v1/accounts/:id, ...
   /^\/v\d+\/customer(\/|$)/i,    // /v1/customer (customer / tenant CRUD)

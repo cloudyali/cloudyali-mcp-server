@@ -27,9 +27,9 @@ export type ThrottleOptions = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-export const DEFAULT_RATE_PER_MINUTE = 60;
-export const DEFAULT_BURST = 10;
-export const DEFAULT_MAX_WAIT_MS = 10_000;
+const DEFAULT_RATE_PER_MINUTE = 60;
+const DEFAULT_BURST = 10;
+const DEFAULT_MAX_WAIT_MS = 10_000;
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -133,16 +133,10 @@ function envInt(name: string): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-// Process-wide bucket. This server is a single-user local process, so one
-// bucket per process is one bucket per user, which is the unit we want to bound.
-// Exported as `let` so tests can swap in a permissive bucket via setApiThrottle;
-// ESM live bindings mean importers always see the current one.
-export let apiThrottle = new TokenBucket({
+// Process-wide bucket. This server is a single-user local process, so one bucket
+// per process is one bucket per user, which is the unit we want to bound.
+export const apiThrottle = new TokenBucket({
   ratePerMinute: envInt("CLOUDYALI_MCP_RATE_PER_MINUTE"),
   burst: envInt("CLOUDYALI_MCP_BURST"),
 });
 
-/** Replace the process-wide bucket. Intended for tests. */
-export function setApiThrottle(b: TokenBucket): void {
-  apiThrottle = b;
-}

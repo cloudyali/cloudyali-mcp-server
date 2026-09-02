@@ -26,7 +26,7 @@ export const PORTAL_URL = (
 // One-shot override: paste a Cognito access JWT and skip the file/refresh logic.
 export const STATIC_JWT_OVERRIDE = process.env.CLOUDYALI_JWT;
 
-export const CREDENTIALS_DIR =
+const CREDENTIALS_DIR =
   process.env.CLOUDYALI_CREDS_DIR ?? join(homedir(), ".cloudyali-mcp");
 export const CREDENTIALS_FILE = join(CREDENTIALS_DIR, "credentials.json");
 

@@ -177,7 +177,7 @@ export function filterWarningFor(filters: unknown): string {
  * `losesUsageType` marks the ones whose per-resource view also drops the
  * usage-type column, which is what breaks the group_by workaround.
  */
-export const RESOURCE_DATASET_PROVIDERS: Readonly<Record<string, { losesUsageType: boolean }>> = {
+const RESOURCE_DATASET_PROVIDERS: Readonly<Record<string, { losesUsageType: boolean }>> = {
   aws: { losesUsageType: true },
   gcp: { losesUsageType: true },
   azure: { losesUsageType: false },

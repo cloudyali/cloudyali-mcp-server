@@ -1,7 +1,7 @@
 {
   "name": "@cloudyali/mcp-server",
   "version": "0.1.0",
-  "description": "MCP server exposing CloudYali cost, budgets, cost-savings opportunities, anomalies, and inventory data to Claude (and other MCP-capable AI clients). Browser-based Cognito auth with auto-refresh; read-only by construction \u2014 no write endpoint is reachable.",
+  "description": "MCP server exposing CloudYali cost, budgets, cost-savings opportunities, anomalies, and inventory data to Claude (and other MCP-capable AI clients). Browser-based Cognito auth with auto-refresh; read-only by construction — no write endpoint is reachable.",
   "license": "MIT",
   "author": "CloudYali <support@cloudyali.io> (https://cloudyali.io)",
   "homepage": "https://github.com/cloudyali/cloudyali-mcp-server#readme",
@@ -31,7 +31,7 @@
   },
   "files": [
     "dist",
-    "server.json"
+    "!dist/**/*.map"
   ],
   "mcpName": "io.github.cloudyali/cloudyali-mcp-server",
   "scripts": {

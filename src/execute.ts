@@ -286,7 +286,7 @@ const LEAKY_ERROR_PATTERNS: RegExp[] = [
   /(postgres(ql)?|redis|amqp):\/\//i,
 ];
 
-export function scrubErrorText(text: string): string {
+function scrubErrorText(text: string): string {
   for (const re of LEAKY_ERROR_PATTERNS) {
     if (re.test(text)) {
       return "The CloudYali API rejected this request. Check the arguments against the tool schema; if they look right, the endpoint may not support this combination.";

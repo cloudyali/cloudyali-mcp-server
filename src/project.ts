@@ -145,7 +145,7 @@ export function projectBody(body: unknown, shape: Shape, opts?: ProjectOptions):
 // reading the dropped-path report, and promoting each action to an allowlist.
 
 /** Key names that must never reach a model, matched at any depth. */
-export const REDACT_KEYS: readonly string[] = [
+const REDACT_KEYS: readonly string[] = [
   "customer_id",
   "customerId",
   "tenant_id",
