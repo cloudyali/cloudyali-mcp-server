@@ -30,6 +30,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { PACKAGE_VERSION } from "./config.js";
 import { TOOLS, handleToolCall } from "./handlers.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { isDirectRun } from "./cli.js";
 import { RESOURCES, readResource } from "./resources.js";
 
@@ -65,6 +66,11 @@ export const server = new Server(
       tools: {},
       resources: {},
     },
+    // Clients MAY put this in the system prompt. It is the only push channel
+    // this server has: tool definitions are pushed, resources are pulled, and a
+    // rule about how to draw a chart is useless to a model that never thinks to
+    // ask for it. See src/instructions.ts.
+    instructions: SERVER_INSTRUCTIONS,
   },
 );
 

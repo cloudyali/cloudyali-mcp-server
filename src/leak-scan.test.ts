@@ -3,6 +3,7 @@ import { RESOURCES, readResource } from "./resources.js";
 import { TOOL_DEFS } from "./tools/index.js";
 import { costWarningsFor } from "./filter-support.js";
 import { RESPONSE_POLICY } from "./shapes.js";
+import { SERVER_INSTRUCTIONS } from "./instructions.js";
 
 // The leak scanner (G13 in the hardening plan).
 //
@@ -37,6 +38,9 @@ const FORBIDDEN: Array<[RegExp, string]> = [
 /** Everything that actually reaches a model. Source comments do not — they are compiled away. */
 function modelFacingText(): Array<[string, string]> {
   const out: Array<[string, string]> = [];
+  // Clients may put this straight into the system prompt, which makes it the
+  // single most model-facing string the server owns.
+  out.push(["server instructions", SERVER_INSTRUCTIONS]);
   for (const r of RESOURCES) {
     out.push([`resource ${r.uri} body`, readResource(r.uri).text]);
     out.push([`resource ${r.uri} description`, r.description ?? ""]);

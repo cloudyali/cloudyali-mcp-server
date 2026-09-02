@@ -158,7 +158,7 @@ async function boot(env) {
   });
   assert(init.result?.serverInfo?.name === "cloudyali", `unexpected initialize result: ${JSON.stringify(init)}`);
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
-  return { child, client };
+  return { child, client, init };
 }
 
 const textOf = (r) => r.result?.content?.map((c) => c.text).join("\n") ?? "";
@@ -181,7 +181,7 @@ async function main() {
   };
 
   // -- 1. The default surface is the typed one -------------------------------
-  const { client } = await boot(apiEnv);
+  const { client, init } = await boot(apiEnv);
   const tools = await client.call("tools/list", {});
   const names = (tools.result?.tools ?? []).map((t) => t.name);
 
@@ -288,8 +288,17 @@ async function main() {
   const markRes = await client.call("resources/read", { uri: "cloudyali://brand-mark" });
   assert((markRes.result?.contents?.[0]?.text ?? "").startsWith("<svg"), "brand mark did not come back as SVG");
 
+  // ...and the design contract only reaches a model that knows to fetch it. Resources are pulled;
+  // `instructions` is the one thing here a client can push into a system prompt. Asserted on the
+  // wire rather than in a unit test, because the failure that prompted it was precisely a rule
+  // that was correct in a module and absent from the protocol.
+  const instructions = init.result?.instructions ?? "";
+  assert(instructions.includes("cloudyali://design"), "initialize sent no pointer to the design resource");
+  assert(/ECharts/.test(instructions), "initialize said nothing about ECharts");
+  assert(/AI-generated/.test(instructions), "initialize said nothing about the artifact stamp");
+
   console.log("smoke: typed surface served, proxy hidden, filter + dataset warnings reach the model, no body leak");
-  console.log("smoke: design contract, ECharts theme and brand mark all readable over the protocol");
+  console.log("smoke: design contract pushed in initialize; theme and brand mark readable over the protocol");
 
   // -- 6. The advanced hatch still opens ------------------------------------
   const adv = await boot({ ...apiEnv, CLOUDYALI_MCP_ADVANCED: "1" });

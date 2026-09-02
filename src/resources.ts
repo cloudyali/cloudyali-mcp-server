@@ -131,7 +131,7 @@ export const RESOURCES: Resource[] = [
     uri: DESIGN_URI,
     name: "CloudYali chart style",
     description:
-      "How to draw CloudYali data so it looks like CloudYali: the categorical palette, which colours are reserved for meaning, and the footer every generated artifact carries. Read before building any chart, dashboard or report.",
+      "How to draw CloudYali data so it looks like CloudYali: the categorical palette, which colours are reserved for meaning, and the provenance stamp every generated artifact carries at the top. Read before building any chart, dashboard, report or artifact — the palette and the reserved colours cannot be guessed.",
     mimeType: "text/markdown",
   },
   {
@@ -145,7 +145,7 @@ export const RESOURCES: Resource[] = [
     uri: MARK_URI,
     name: "CloudYali brand mark",
     description:
-      "The CloudYali logo as inline SVG, for the footer of a generated artifact. Self-contained \u2014 it carries its own background, so it sits on a light or dark chart unchanged. Paste verbatim.",
+      "The CloudYali logo as inline SVG, for the stamp at the top of a generated artifact. Self-contained \u2014 it carries its own background, so it sits on a light or dark chart unchanged. Paste verbatim.",
     mimeType: "image/svg+xml",
   },
   {
