@@ -82,6 +82,22 @@ describe("MCP resources", () => {
     for (const hex of quoted) expect(known, `${hex} is in the guide but not in the theme`).toContain(hex);
   });
 
+  it("forbids hand-rolling a chart, and says what that silently costs", () => {
+    // Reported from a published page: the chart hovered and did nothing else. It was hand-drawn
+    // SVG with one mousemove listener and a legend built from inert spans — which looks exactly
+    // like the console's legend and is not clickable. The guide said "charts are ECharts" and
+    // nothing said why it mattered, so the cheaper path kept winning.
+    const guide = readResource("cloudyali://design").text;
+    expect(guide).toMatch(/do not hand-roll the chart/i);
+    expect(guide).toMatch(/legend/i);
+    expect(guide).toMatch(/dataZoom/);
+    expect(guide.replace(/\s+/g, " ")).toMatch(/inert markup/i);
+    // And the honest failure when the library does not load.
+    expect(guide).toMatch(/silently renders nothing is[\s\S]*?indistinguishable/i);
+    // The exception, so "always ECharts" does not get applied to a sparkline.
+    expect(guide).toMatch(/anything with an axis gets the library/i);
+  });
+
   it("bounds the source line to scope, estimates and window", () => {
     // The failure this pins: a report footer that read "CloudYali savings engine + AWS Cost
     // Optimization Hub ... the savings engine does not yet emit these findings itself". That is

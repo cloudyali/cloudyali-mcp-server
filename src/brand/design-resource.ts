@@ -28,8 +28,32 @@ echarts.registerTheme('cloudyali', theme);   // theme = the JSON from cloudyali:
 echarts.init(el, 'cloudyali');
 \`\`\`
 
-If you are rendering somewhere ECharts is not available, use the palette below directly and keep
-the same rules — the rules matter more than the library.
+**Do not hand-roll the chart.** Drawing \`<rect>\` and \`<path>\` elements yourself is the single
+most common way a CloudYali artifact ends up feeling broken, and it fails quietly: the picture is
+correct, so nothing looks wrong. What is missing is everything the console has trained the reader
+to expect, because in a charting library those are components you switch on and in hand-written SVG
+they are features somebody has to remember to build:
+
+| Affordance | ECharts | Hand-rolled SVG |
+|---|---|---|
+| Click a legend entry to isolate a series | on by default | absent unless written |
+| Any combination of series toggled | on by default | absent unless written |
+| Drag to narrow the date range | \`dataZoom\` | absent unless written |
+| Shared axis pointer across a stack | \`axisPointer\` | absent unless written |
+| Highlight a band, dim the rest | \`emphasis.focus\` | absent unless written |
+| Redraw on resize and theme change | \`resize()\` | absent unless written |
+
+A hand-drawn legend is the worst of it: it looks exactly like the console's legend, and it is inert
+markup. The reader clicks it, nothing happens, and the page reads as broken rather than as simple.
+
+So: \`<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.6.0/echarts.min.js">\` (cdnjs is
+on the artifact allowlist; pin the version), then \`echarts.init\` and the theme. If the library
+fails to load, say so in the empty container — a chart that silently renders nothing is
+indistinguishable from a chart that found no data, and those need different reactions from the
+reader.
+
+Reach for hand-drawn SVG only for something that is not a chart: a sparkline in a table cell, a
+single progress bar, a diagram. Anything with an axis gets the library.
 
 ## The categorical ramp
 
