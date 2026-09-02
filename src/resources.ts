@@ -9,9 +9,14 @@
 // documentation in resources, not descriptions.
 
 import type { Resource } from "@modelcontextprotocol/sdk/types.js";
+import { BRAND_MARK_SVG, ECHARTS_THEME } from "./brand/assets.js";
+import { DESIGN_MD } from "./brand/design-resource.js";
 
 const FILTERS_URI = "cloudyali://filters";
 const GLOSSARY_URI = "cloudyali://glossary";
+const DESIGN_URI = "cloudyali://design";
+const THEME_URI = "cloudyali://echarts-theme";
+const MARK_URI = "cloudyali://brand-mark";
 
 const FILTERS_MD = `# CloudYali cost filter grammar
 
@@ -165,6 +170,27 @@ date.
 
 export const RESOURCES: Resource[] = [
   {
+    uri: DESIGN_URI,
+    name: "CloudYali chart style",
+    description:
+      "How to draw CloudYali data so it looks like CloudYali: the categorical palette, which colours are reserved for meaning, and the footer every generated artifact carries. Read before building any chart, dashboard or report.",
+    mimeType: "text/markdown",
+  },
+  {
+    uri: THEME_URI,
+    name: "CloudYali ECharts theme",
+    description:
+      "The ECharts 5 theme object, colours resolved to literal hex. Register with echarts.registerTheme('cloudyali', theme). Fetch only when you are actually rendering with ECharts.",
+    mimeType: "application/json",
+  },
+  {
+    uri: MARK_URI,
+    name: "CloudYali brand mark",
+    description:
+      "The CloudYali logo as inline SVG, for the footer of a generated artifact. Self-contained \u2014 it carries its own background, so it sits on a light or dark chart unchanged. Paste verbatim.",
+    mimeType: "image/svg+xml",
+  },
+  {
     uri: FILTERS_URI,
     name: "Cost filter grammar",
     description:
@@ -180,13 +206,18 @@ export const RESOURCES: Resource[] = [
   },
 ];
 
-const BODIES: Record<string, string> = {
-  [FILTERS_URI]: FILTERS_MD,
-  [GLOSSARY_URI]: GLOSSARY_MD,
+const BODIES: Record<string, { mimeType: string; text: string }> = {
+  [FILTERS_URI]: { mimeType: "text/markdown", text: FILTERS_MD },
+  [GLOSSARY_URI]: { mimeType: "text/markdown", text: GLOSSARY_MD },
+  [DESIGN_URI]: { mimeType: "text/markdown", text: DESIGN_MD },
+  // Pretty-printed rather than minified: this gets read as much as it gets pasted, and a model
+  // that can see the structure is less likely to invent a key that does not exist.
+  [THEME_URI]: { mimeType: "application/json", text: JSON.stringify(ECHARTS_THEME, null, 2) },
+  [MARK_URI]: { mimeType: "image/svg+xml", text: BRAND_MARK_SVG },
 };
 
 export function readResource(uri: string): { uri: string; mimeType: string; text: string } {
-  const text = BODIES[uri];
-  if (!text) throw new Error(`Unknown resource: ${uri}`);
-  return { uri, mimeType: "text/markdown", text };
+  const body = BODIES[uri];
+  if (!body) throw new Error(`Unknown resource: ${uri}`);
+  return { uri, mimeType: body.mimeType, text: body.text };
 }

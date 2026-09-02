@@ -133,6 +133,41 @@ export function callbackHtml(): string {
     d.innerHTML = detail;
     d.className = isError ? 'err' : '';
   }
+  // Close the tab once the CLI has what it needs. window.close() only works on
+  // a window script opened, and this one was opened by the OS handler — so
+  // treat closing as an attempt, not a promise. If the browser refuses, say so
+  // plainly rather than leaving a countdown that reached zero and did nothing.
+  //
+  // The countdown is cancellable on any interaction: the page is also the place
+  // someone lands when they want to check what just happened, and pulling a tab
+  // out from under a reader to save them one keystroke is a bad trade.
+  function startAutoClose() {
+    var left = 60;
+    var el = document.getElementById('closing');
+    var timer = null;
+
+    function stop(message) {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (el) el.textContent = message;
+    }
+    function tick() {
+      if (el) el.textContent = 'Closing this tab in ' + left + 's.';
+      if (left-- > 0) return;
+      stop('Closing…');
+      window.close();
+      // Still here means the browser declined. Nothing is broken — the session
+      // is saved either way — so this is information, not an error.
+      setTimeout(function () { stop('Your browser will not let this tab close itself. You can close it.'); }, 300);
+    }
+
+    ['mousedown', 'keydown', 'touchstart'].forEach(function (evt) {
+      window.addEventListener(evt, function () { stop('You can close this tab.'); }, { once: true });
+    });
+
+    tick();
+    timer = setInterval(tick, 1000);
+  }
+
   var data = Object.fromEntries(new URLSearchParams(window.location.hash.slice(1)));
   // Clear the fragment before any network call so tokens never linger in history.
   history.replaceState(null, '', window.location.pathname);
@@ -142,7 +177,10 @@ export function callbackHtml(): string {
     body: JSON.stringify(data)
   }).then(function (res) {
     if (data.error === 'access_denied') return set('Sign-in cancelled', 'You can close this tab.');
-    if (res.ok) return set('You are signed in', 'The CLI has a valid session and will keep itself refreshed. You can close this tab.');
+    if (res.ok) {
+      set('You are signed in', 'The CLI has a valid session and will keep itself refreshed. <span id="closing"></span>');
+      return startAutoClose();
+    }
     return res.text().then(function (t) { set('Sign-in failed', escapeHtml(t || 'Unknown error.'), true); });
   }).catch(function (err) { set('Sign-in failed', escapeHtml(String(err)), true); });
 })();

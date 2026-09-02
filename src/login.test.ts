@@ -97,6 +97,102 @@ describe("callbackHtml", () => {
     expect(html).toContain("history.replaceState");
     expect(html).toContain("escapeHtml");
   });
+
+  it("arms the auto-close only on the success branch", () => {
+    // A failed sign-in leaves an error on screen that the user needs to read,
+    // and a cancelled one is a decision they just made. Neither should have the
+    // tab pulled out from under it.
+    const html = callbackHtml();
+    const success = html.slice(html.indexOf("if (res.ok)"), html.indexOf("return res.text()"));
+    expect(success).toContain("startAutoClose()");
+    const failure = html.slice(html.indexOf("return res.text()"));
+    expect(failure).not.toContain("startAutoClose()");
+    expect(html.slice(html.indexOf("access_denied"), html.indexOf("if (res.ok)"))).not.toContain("startAutoClose");
+  });
+});
+
+// The callback page's script is a string, so it never runs in the unit suite and
+// nothing catches a typo in it. The auto-close has three branches that all end
+// with the tab still open if they are wrong, so it gets a real execution against
+// a hand-rolled DOM rather than a substring assertion.
+describe("the callback page's auto-close, executed", () => {
+  function runAutoClose() {
+    const html = callbackHtml();
+    const body = html.slice(html.indexOf("function startAutoClose()"), html.indexOf("var data = Object.fromEntries"));
+
+    const el = { textContent: "" };
+    const listeners: Record<string, Array<() => void>> = {};
+    let closeCalls = 0;
+
+    const win = {
+      close: () => {
+        closeCalls++;
+      },
+      addEventListener: (evt: string, fn: () => void) => {
+        (listeners[evt] ??= []).push(fn);
+      },
+    };
+    const doc = { getElementById: () => el };
+
+    // eslint-disable-next-line no-new-func
+    const make = new Function("window", "document", `${body}; return startAutoClose;`);
+    make(win, doc)();
+
+    return {
+      el,
+      closeCalls: () => closeCalls,
+      fire: (evt: string) => (listeners[evt] ?? []).forEach((f) => f()),
+    };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("counts down from 60 and closes when it reaches zero", () => {
+    const t = runAutoClose();
+    expect(t.el.textContent).toBe("Closing this tab in 60s.");
+    vi.advanceTimersByTime(1000);
+    expect(t.el.textContent).toBe("Closing this tab in 59s.");
+    vi.advanceTimersByTime(59_000);
+    expect(t.closeCalls()).toBe(1);
+  });
+
+  it("does not close early, and does not close twice", () => {
+    const t = runAutoClose();
+    vi.advanceTimersByTime(59_000);
+    expect(t.closeCalls()).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expect(t.closeCalls()).toBe(1);
+  });
+
+  it("tells the truth when the browser refuses to close the tab", () => {
+    // window.close() is a no-op on a tab the script did not open, which is every
+    // tab this page ever runs in when the CLI hands off to the OS browser. A
+    // countdown that hits zero and silently does nothing reads as a bug.
+    const t = runAutoClose();
+    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(300);
+    expect(t.el.textContent).toMatch(/will not let this tab close itself/i);
+  });
+
+  it("cancels the countdown as soon as the user touches the page", () => {
+    const t = runAutoClose();
+    vi.advanceTimersByTime(2000);
+    t.fire("keydown");
+    expect(t.el.textContent).toBe("You can close this tab.");
+    vi.advanceTimersByTime(120_000);
+    expect(t.closeCalls()).toBe(0);
+    expect(t.el.textContent).toBe("You can close this tab.");
+  });
+
+  it("cancels on a click and on touch, not only on a keypress", () => {
+    for (const evt of ["mousedown", "touchstart"]) {
+      const t = runAutoClose();
+      t.fire(evt);
+      vi.advanceTimersByTime(120_000);
+      expect(t.closeCalls(), evt).toBe(0);
+    }
+  });
 });
 
 describe("readJsonBody", () => {

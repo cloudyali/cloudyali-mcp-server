@@ -264,7 +264,26 @@ async function main() {
   });
   assert(!/WARNING/.test(textOf(clean)), "a clean query emitted a warning — a warning on every call is one nobody reads");
 
+  // -- 6. The design contract is reachable over the protocol ---------------
+  //
+  // The palette only reaches a chart if a client can actually fetch it, and a resource that is
+  // advertised but unreadable fails silently — the model shrugs and picks its own colours, which
+  // looks like a styling preference rather than a broken server.
+  const resources = await client.call("resources/list", {});
+  const uris = (resources.result?.resources ?? []).map((r) => r.uri);
+  for (const u of ["cloudyali://design", "cloudyali://echarts-theme", "cloudyali://brand-mark"]) {
+    assert(uris.includes(u), `${u} missing from resources/list: ${uris.join(", ")}`);
+  }
+  const themeRes = await client.call("resources/read", { uri: "cloudyali://echarts-theme" });
+  const themeText = themeRes.result?.contents?.[0]?.text ?? "";
+  const parsed = JSON.parse(themeText);
+  assert(parsed.color?.length === 6, `ECharts theme should rotate 6 colours, got ${parsed.color?.length}`);
+  assert(!/var\(/.test(themeText), "ECharts theme leaked a CSS custom property — canvas draws that transparent");
+  const markRes = await client.call("resources/read", { uri: "cloudyali://brand-mark" });
+  assert((markRes.result?.contents?.[0]?.text ?? "").startsWith("<svg"), "brand mark did not come back as SVG");
+
   console.log("smoke: typed surface served, proxy hidden, filter + dataset warnings reach the model, no body leak");
+  console.log("smoke: design contract, ECharts theme and brand mark all readable over the protocol");
 
   // -- 6. The advanced hatch still opens ------------------------------------
   const adv = await boot({ ...apiEnv, CLOUDYALI_MCP_ADVANCED: "1" });
