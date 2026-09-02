@@ -164,6 +164,15 @@ describe("no catalog response can carry a tenant key", () => {
     properties: { raw: "provider blob" },
     users: ["engineer@acme.com"],
     processing_time: "412ms",
+    // Detector and engine internals. zScore was allowlisted on the anomaly
+    // shape and reached a user; the leak scanner could not see it, because it
+    // reads descriptions and schemas rather than field names. This sweep does.
+    zScore: 8.0,
+    z_score: 8.0,
+    engine_version: "v3",
+    rule_id: "idle_ebs_v2",
+    config_checksum: "abc123",
+    rootCauseAnalysis: { top_driver: "internal" },
   };
 
   for (const action of CATALOG) {
@@ -178,6 +187,12 @@ describe("no catalog response can carry a tenant key", () => {
         "engineer@acme.com",
         "provider blob",
         "processing_time",
+        "zScore",
+        "z_score",
+        "engine_version",
+        "rule_id",
+        "config_checksum",
+        "rootCauseAnalysis",
       ]) {
         expect(json, `${action.id} leaked ${needle}`).not.toContain(needle);
       }

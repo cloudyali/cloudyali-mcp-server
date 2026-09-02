@@ -106,7 +106,14 @@ const OPPORTUNITY: Shape = {
 
 // Dropped from AnomalyDTO: customerId, createdAt/updatedAt (detectedAt and
 // anomalyDate are the meaningful timestamps), rootCauseAnalysis (an untyped
-// blob). `id` is kept: it is a UUID, not a sequential key.
+// blob), and zScore. `id` is kept: it is a UUID, not a sequential key.
+//
+// zScore is how the detector decided, not what happened to the bill — the
+// backend files it under "detection metadata" itself. Reported alongside the
+// money it also actively misleads: an 8.0 next to a $0.41 impact reads as an
+// eight-sigma emergency over forty-one cents, and invites ranking anomalies by
+// a statistic instead of by dollars. What a reader can act on is already here —
+// expected vs actual, the impact, and deviationPercentage.
 const ANOMALY: Shape = {
   id: "value",
   detectedAt: "value",
@@ -118,7 +125,6 @@ const ANOMALY: Shape = {
   actualCost: "value",
   costImpact: "value",
   deviationPercentage: "value",
-  zScore: "value",
   status: "value",
 };
 

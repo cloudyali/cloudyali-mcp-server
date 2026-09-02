@@ -196,6 +196,16 @@ const REDACT_KEYS: readonly string[] = [
   "engine_version",
   "rule_id",
   "config_checksum",
+  // Detector internals. How a number was decided is machinery in the same sense
+  // a table name is: it describes the system, not the bill. zScore reached a
+  // user beside a $0.41 impact, where 8.0 reads as an eight-sigma emergency over
+  // forty-one cents. The allowlist drops it on the anomaly shape; these entries
+  // are what stop it reappearing through a redacted body, which is a denylist
+  // and passes anything nobody thought to name.
+  "zScore",
+  "z_score",
+  "rootCauseAnalysis",
+  "root_cause_analysis",
   "savings_provenance",
   "evidence",
   "payload",

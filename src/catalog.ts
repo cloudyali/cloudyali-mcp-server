@@ -394,7 +394,7 @@ export const CATALOG: Action[] = [
       serviceName: { type: "string", description: "Service name filter." },
       sortBy: {
         type: "string",
-        enum: ["anomaly_date", "detected_at", "cost_impact", "deviation_percentage", "z_score", "expected_cost", "actual_cost"],
+        enum: ["anomaly_date", "detected_at", "cost_impact", "deviation_percentage", "expected_cost", "actual_cost"],
         description: "Column to sort by. Default: anomaly_date. Restricted to a fixed allowlist; other values fall back to anomaly_date.",
       },
       sortOrder: { type: "string", enum: ["asc", "desc"], description: "Sort direction. Default: desc." },
@@ -423,7 +423,7 @@ export const CATALOG: Action[] = [
     path: "/v1/anomalies/:id",
     category: "anomalies",
     summary: "Get a single anomaly by ID (UUID)",
-    description: "Anomaly detail: provider, service, account, expected vs actual cost, impact, deviation and z-score, plus detection timestamps. The root-cause-analysis blob is not surfaced; see src/shapes.ts.",
+    description: "Anomaly detail: provider, service, account, expected vs actual cost, impact, deviation percentage, plus detection timestamps. Detector internals are not surfaced; see src/shapes.ts.",
     pathParams: {
       id: { type: "string", description: "Anomaly UUID.", required: true },
     },

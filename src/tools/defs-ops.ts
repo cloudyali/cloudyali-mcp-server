@@ -42,7 +42,6 @@ export const ANOMALY_TOOLS: ToolDef[] = [
         "detected_at",
         "cost_impact",
         "deviation_percentage",
-        "z_score",
         "expected_cost",
         "actual_cost",
       ]),
@@ -71,7 +70,7 @@ export const ANOMALY_TOOLS: ToolDef[] = [
     name: "get_anomaly",
     title: "One anomaly",
     description:
-      "Detail for a single anomaly: provider, service, account, expected vs actual cost, impact, deviation and z-score. The root-cause-analysis blob is not surfaced through the MCP.",
+      "Detail for a single anomaly: provider, service, account, expected vs actual cost, impact and deviation percentage. How the detector scored it is not surfaced — rank and compare anomalies by cost impact, which is the figure someone can act on.",
     openWorld: true,
     inputSchema: obj({ id: str("Anomaly UUID, from list_anomalies.", { minLength: 8 }) }, ["id"]),
     call: (a) => ({ action: "anomalies.get", path_params: { id: a.id } }),

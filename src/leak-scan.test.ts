@@ -34,6 +34,11 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/postgres|squirrel|gorilla\/mux|negroni|goroutine|\.go\b|queryService|rajgad/i, "backend stack"],
   [/refreshed by|refresh job|separate jobs|retention window|last refreshed/i, "refresh/retention internals"],
   [/customer_id|customerId/i, "tenant key"],
+  // How a number was decided is machinery, exactly like where it was stored.
+  // z-score reached a user beside a $0.41 impact, where 8.0 reads as an
+  // eight-sigma emergency over forty-one cents — accurate, unusable, and an
+  // invitation to rank anomalies by a statistic instead of by dollars.
+  [/z[-_ ]?score|\bsigma\b|standard deviation|engine_version|config_checksum|rootCauseAnalysis|\brule_id\b/i, "detector internals"],
 ];
 
 /** Everything that actually reaches a model. Source comments do not — they are compiled away. */
