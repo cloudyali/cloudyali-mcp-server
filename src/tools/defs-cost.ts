@@ -81,7 +81,7 @@ export const COST_TOOLS: ToolDef[] = [
     name: "query_costs",
     title: "Aggregate costs grouped by dimension",
     description:
-      "Ad-hoc cost aggregation: raw rows of (grouping columns, cost, timestamp). This is the workhorse for 'break down X by Y'. Prefer get_cost_breakdown when you want chart- or table-shaped output with top-N rollup; prefer get_spend_summary for a single headline number.",
+      "Ad-hoc cost aggregation: raw rows of (grouping fields, cost, timestamp). This is the workhorse for 'break down X by Y'. Prefer get_cost_breakdown when you want chart- or table-shaped output with top-N rollup; prefer get_spend_summary for a single headline number.",
     openWorld: true,
     inputSchema: obj({
       start_time: rfc3339("Start of the window. Defaults to 30 days ago"),
@@ -97,7 +97,7 @@ export const COST_TOOLS: ToolDef[] = [
       filters,
       cost_type: { type: "object", description: costTypeHint },
       order_by: enumStr(
-        "Column to sort by. Note the cost column is `amount`, not `cost` — the backend interpolates this into ORDER BY and an unknown column fails the whole query.",
+        "Field to sort by. The cost field is `amount`, not `cost`; any value outside the enum fails the whole request rather than being ignored.",
         ["amount", "account", "region", "service", "cloud_provider", "cost_type", "usage_type", "timestamp"],
       ),
       order_desc: bool("Sort descending."),

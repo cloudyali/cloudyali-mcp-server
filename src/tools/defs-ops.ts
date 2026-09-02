@@ -37,7 +37,7 @@ export const ANOMALY_TOOLS: ToolDef[] = [
       serviceName: str("Service name filter, e.g. AmazonEC2."),
       minCostImpact: num("Minimum cost impact in dollars."),
       maxCostImpact: num("Maximum cost impact in dollars."),
-      sortBy: enumStr("Sort column.", [
+      sortBy: enumStr("Sort field.", [
         "anomaly_date",
         "detected_at",
         "cost_impact",
@@ -240,7 +240,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
         text:
           `Priced ${rows.length} resource(s); ${withData} had attributable cost. A resource with no cost data is normal — not every resource type is billed individually.` +
           caveat +
-          ` These figures come from the per-resource billing dataset, which is refreshed separately from the aggregate one used by query_costs and get_cost_breakdown; a total built here will not necessarily match a total built there.`,
+          ` These come from the API's per-resource costing, which is a different source from the one query_costs and get_cost_breakdown read: a total summed here will not necessarily match a total built there, and the two should not be reconciled.`,
       };
     },
   },

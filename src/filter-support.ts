@@ -224,24 +224,28 @@ export function datasetSwitchWarning(switched: DatasetSwitch[], groupBy?: unknow
   const names = switched.map((s) => s.provider.toUpperCase());
   const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
+  // Deliberately says WHAT the reader observes and never WHY. The mechanism behind this is
+  // backend storage detail: it does not belong in model context (this server's whole premise is
+  // that internal shape stays inside), and it is not something the MCP can see — it reaches the
+  // API over HTTP like any other client, so a mechanism asserted here could not be kept honest
+  // if the backend changed. The consequence is the part that changes behaviour anyway.
   let text =
-    `WARNING: filtering by resource_names makes the CloudYali API read a different dataset for ${list} — ` +
-    `the per-resource billing view rather than the aggregate one. The two are refreshed separately and keep ` +
-    `different retention windows, so totals from this call will not necessarily reconcile with the same query ` +
-    `run without a resource_names filter, and a month can have rows in one and none in the other. ` +
-    `Report this as a per-resource figure; do not present it as the same measurement as an unfiltered total, ` +
-    `and if the two disagree do not explain the gap as billing lag — it is the dataset.`;
+    `WARNING: adding a resource_names filter changes which source answers for ${list}. Totals from this ` +
+    `call are NOT comparable with the same query run without that filter — a period can return rows one ` +
+    `way and nothing the other. Report this as a per-resource figure. If it disagrees with an unfiltered ` +
+    `total, do not account for the difference: the two answer different questions, and any explanation you ` +
+    `could offer for the gap — billing lag, a partial month, rounding, allocation drift — would be invented.`;
 
   const degraded = switched.filter((s) => s.losesUsageType).map((s) => s.provider.toUpperCase());
   if (degraded.length > 0 && groupsByUsageType(groupBy)) {
     text +=
-      ` Also: the per-resource view for ${degraded.join(" and ")} has no usage-type column, so the requested ` +
-      `usage_type grouping collapses into a single "Unknown" bucket instead of failing. Those grouped rows carry no usage-type meaning.`;
+      ` Also: with this filter applied, ${degraded.join(" and ")} cannot group by usage type — the request does ` +
+      `not fail, it returns every row in a single "Unknown" bucket. Those rows carry no usage-type meaning.`;
   }
 
   text +=
-    ` If no rows come back at all, that is not evidence of zero spend: an unrefreshed per-resource view makes the ` +
-    `API drop the provider from the report silently.`;
+    ` And if no rows come back at all, that is not evidence of zero spend: the API can answer this shape of ` +
+    `query by omitting a provider entirely, with a 200 and no mention of it.`;
   return text;
 }
 

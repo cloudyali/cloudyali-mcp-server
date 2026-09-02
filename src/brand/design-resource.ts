@@ -84,34 +84,36 @@ cost axis to start above zero — a bar chart that starts at $30 turns a 4% rise
 
 **Sort categorical bars by value, not alphabetically**, unless the reader asked for a lookup.
 
-## Every generated artifact carries a footer
+## Every generated artifact is stamped, at the top
 
-Charts get screenshotted and pasted into Slack, and the caveats stay behind in the conversation. So
-the artifact itself has to carry its provenance. Put this at the bottom of any chart, dashboard or
-report you generate — fetch the mark from \`cloudyali://brand-mark\` and paste it verbatim:
+Charts get screenshotted and pasted into Slack, and the caveats stay behind in the conversation.
+So the artifact carries its own provenance — at the **top**, where it is read before the numbers
+rather than after them. Fetch the mark from \`cloudyali://brand-mark\` and paste it verbatim:
 
 \`\`\`html
-<footer style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-               margin-top:24px;padding-top:12px;border-top:1px solid ${ECHARTS_THEME.tooltip.borderColor};
+<header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+               margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid ${ECHARTS_THEME.tooltip.borderColor};
                font:12px/1.5 ${ECHARTS_THEME.textStyle.fontFamily},system-ui,sans-serif;
                color:${ECHARTS_THEME.textStyle.color}">
   <!-- the <svg> from cloudyali://brand-mark, verbatim -->
-  <span>Generated <time datetime="ISO-8601">&lt;date and time, with the timezone&gt;</time></span>
-  <span style="color:${C.warning}">AI-generated — Claude can make mistakes. Check the figures before acting on them.</span>
-</footer>
+  <span>Generated <time datetime="ISO-8601">&lt;local time with zone, and UTC&gt;</time></span>
+  <span style="color:${C.warning}">AI-generated — verify before acting on these figures.</span>
+</header>
 \`\`\`
 
-Three things, all required:
+Three things, and only three. Keep it to one line each — this is a stamp, not a preamble.
 
-1. **The mark**, so the artifact is identifiable as CloudYali output.
-2. **A timestamp**, with the timezone, and the *window the data covers* if that differs from when
-   it was generated. Cloud bills are restated for days after the fact; an undated cost chart is
-   unfalsifiable.
-3. **The AI notice.** Not boilerplate — it is doing real work here, because these tools can return
-   a number that is correct for a question slightly different from the one asked.
+1. **The mark.**
+2. **The real generation time**, in the reader's local zone and UTC. Read the clock; never write a
+   placeholder or a rounded hour. An undated cost figure is unfalsifiable, and a wrong one is worse
+   than none.
+3. **The AI notice.**
 
-**And the part that actually matters:** if any tool result carried a \`WARNING:\` line — a filter the
-API silently dropped, a query re-pointed at a different dataset — that warning goes in the footer
-too, in full. The chart is exactly where such a caveat gets lost, and a caveat that survives only in
-the transcript has not survived.
+Anything else you want to say about the data — what it covers, what it excludes, which figures are
+not comparable — goes in the body or a short source line at the end, not in this stamp.
+
+**And the part that carries real weight:** if a tool result carried a \`WARNING:\` line, that warning
+belongs in the artifact too, in the body, in full. The chart is exactly where such a caveat gets
+lost. Restate what the warning said; do not restate any explanation of *why* — the tools do not
+give you one, and inventing a mechanism is worse than leaving the caveat bare.
 `;

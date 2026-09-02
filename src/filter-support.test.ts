@@ -167,12 +167,26 @@ describe("a resource_names filter changes which dataset answers", () => {
     expect(findDatasetSwitch(awsGroup({ resource_arns: [{ operator: "equals", value: ["arn:aws:ec2:::vol/vol-1"] }] }))).toEqual([]);
   });
 
-  it("names the provider and refuses the billing-lag explanation", () => {
+  it("names the provider and forbids inventing an explanation", () => {
     const text = datasetSwitchWarning(findDatasetSwitch(awsGroup({ resource_names: [{ operator: "equals", value: ["vol-1"] }] })));
     expect(text).toMatch(/AWS/);
-    expect(text).toMatch(/different dataset/i);
-    expect(text).toMatch(/not.*reconcile/i);
+    expect(text).toMatch(/NOT comparable/);
+    expect(text).toMatch(/would be invented/i);
+    // Naming the wrong explanations by name is what stops them being reached for.
     expect(text).toMatch(/billing lag/i);
+  });
+
+  it("says what the reader observes and never what is behind the API", () => {
+    // The first version of this warning explained the mechanism, using vocabulary
+    // that only exists inside the backend. The MCP talks to an HTTP API like any
+    // other client: it cannot see that mechanism, so it cannot keep the claim
+    // true, and relaying internal shape is the exact thing this server exists to
+    // prevent. Behaviour survives; explanation does not.
+    const text = datasetSwitchWarning(
+      findDatasetSwitch(awsGroup({ resource_names: [{ operator: "equals", value: ["vol-1"] }] })),
+      ["usage_type"],
+    );
+    expect(text).not.toMatch(/materiali[sz]ed|view\b|refresh|retention|table\b|column\b|schema/i);
   });
 
   it("says an empty result is not evidence of zero spend", () => {
@@ -216,7 +230,7 @@ describe("costWarningsFor composes the two warnings without contradicting itself
     // the view being read, so the advice would produce a second wrong answer.
     const text = costWarningsFor(awsResourceFiltered);
     expect(text).toMatch(/does not support filtering by usage_types/);
-    expect(text).toMatch(/different dataset/i);
+    expect(text).toMatch(/changes which source answers/i);
     expect(text).not.toMatch(/add the dimension to group_by/);
     expect(text).toMatch(/Narrow client-side/);
   });
@@ -232,7 +246,7 @@ describe("costWarningsFor composes the two warnings without contradicting itself
       ],
     });
     expect(text).toMatch(/add the dimension to group_by/);
-    expect(text).not.toMatch(/different dataset/i);
+    expect(text).not.toMatch(/changes which source answers/i);
   });
 
   it("reads the grouping argument under either of its two names", () => {

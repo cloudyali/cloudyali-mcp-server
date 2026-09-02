@@ -218,14 +218,17 @@ describe("empty results are directed, not just zero", () => {
     expect(out.text).not.toMatch(/confidence/i);
   });
 
-  it("get_resource_costs warns that its totals are a different dataset from query_costs", () => {
-    // The reconciliation trap: per-resource costs and aggregate costs read
-    // separately-refreshed materialized views. Summing here and comparing there
-    // produces a gap that invites an invented explanation.
+  it("get_resource_costs warns that its totals do not reconcile with query_costs", () => {
+    // The reconciliation trap: per-resource costs and aggregate costs come from
+    // different sources within the API. Summing here and comparing there produces
+    // a gap that invites an invented explanation. The warning names the
+    // consequence and stops — the cause is backend shape the MCP cannot see.
     const t = TOOL_DEFS.find((d) => d.name === "get_resource_costs")!;
     const out = t.present!({ resources: [{ resource_id: "a", has_cost_data: true }] }, ARGS.get_resource_costs);
-    expect(out.text).toMatch(/refreshed separately/i);
+    expect(out.text).toMatch(/different source/i);
+    expect(out.text).toMatch(/should not be reconciled/i);
     expect(out.text).toMatch(/query_costs/);
+    expect(out.text).not.toMatch(/materiali[sz]ed|refresh|retention/i);
   });
 
   it("get_resource_costs distinguishes 'no data' from 'no such resource'", () => {

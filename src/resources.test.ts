@@ -85,9 +85,11 @@ describe("MCP resources", () => {
   it("states the three things every generated artifact must carry", () => {
     const guide = readResource("cloudyali://design").text;
     expect(guide).toMatch(/cloudyali:\/\/brand-mark/);
-    expect(guide).toMatch(/timestamp/i);
+    expect(guide).toMatch(/generation time/i);
     expect(guide).toMatch(/AI-generated/);
-    expect(guide).toMatch(/can make mistakes/i);
+    expect(guide).toMatch(/verify before acting/i);
+    // A stamp, not a preamble — the instruction has to say so, or it grows.
+    expect(guide).toMatch(/one line each/i);
   });
 
   it("tells the renderer to carry a tool WARNING into the artifact", () => {
@@ -96,7 +98,7 @@ describe("MCP resources", () => {
     // silently-dropped filter becomes a number someone acts on.
     const guide = readResource("cloudyali://design").text;
     expect(guide).toMatch(/WARNING:/);
-    expect(guide.replace(/\s+/g, " ")).toMatch(/survives only in the transcript has not survived/);
+    expect(guide.replace(/\s+/g, " ")).toMatch(/inventing a mechanism is worse than leaving the caveat bare/);
   });
 
   it("keeps red out of the categorical ramp in the guide as well as the theme", () => {
@@ -112,10 +114,22 @@ describe("MCP resources", () => {
     // this first. Both need to say it; the warning alone arrives too late to
     // change the plan.
     const text = readResource("cloudyali://filters").text;
-    expect(text).toMatch(/resource_names.*different materialized view/is);
+    expect(text).toMatch(/resource_names.*changes.*where the answer comes from/is);
     expect(text).toMatch(/not evidence of zero spend/i);
     expect(text).toMatch(/billing lag/i);
     expect(text).toMatch(/match_confidence/);
+  });
+
+  it("describes the switch by what is observable, never by what is behind the API", () => {
+    // This resource is where the leak was. It explained the mechanism -- storage
+    // layout, refresh cadence, a retention window -- none of which the MCP can
+    // see, all of which it had no business relaying. The behaviour survives; the
+    // explanation does not. src/leak-scan.test.ts enforces the general rule; this
+    // pins the specific passage that got it wrong.
+    const text = readResource("cloudyali://filters").text;
+    expect(text).toMatch(/not comparable/i);
+    expect(text).toMatch(/would be invented/i);
+    expect(text).not.toMatch(/view|refresh|table|column|seven months/i);
   });
 
   it("keeps the per-provider drop table and the dataset section consistent", () => {
@@ -124,7 +138,7 @@ describe("MCP resources", () => {
     // that into "Azure is fine" or "Azure is broken", the doc stops matching
     // filter-support.ts and the tools start contradicting the reference.
     const text = readResource("cloudyali://filters").text;
-    expect(text).toMatch(/Azure.*meter_subcategory.*unaffected/is);
+    expect(text).toMatch(/Azure is unaffected/i);
     expect(text).toMatch(/\| Azure \| `resource_types` \|/);
   });
 });

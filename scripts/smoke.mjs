@@ -219,9 +219,15 @@ async function main() {
     },
   });
   const switchedText = textOf(switched);
-  assert(/different dataset/i.test(switchedText), `no dataset-switch warning: ${switchedText.slice(0, 300)}`);
+  assert(/changes which source answers/i.test(switchedText), `no dataset-switch warning: ${switchedText.slice(0, 300)}`);
   assert(/zero spend/i.test(switchedText), "dataset-switch warning does not say an empty result is not zero spend");
   assert(/Unknown/.test(switchedText), "usage_type grouping under a resource filter did not warn that it collapses");
+  // The warning must not explain itself using vocabulary that only exists inside the backend —
+  // it is model-facing text, and this server's premise is that internal shape stays internal.
+  assert(
+    !/materiali[sz]ed|refreshed|retention window|\bmv_/i.test(switchedText),
+    `the dataset-switch warning leaked backend internals: ${switchedText.slice(0, 300)}`,
+  );
 
   // -- 4. Nothing echoes an internal identifier -----------------------------
   //
@@ -244,7 +250,7 @@ async function main() {
   const pricedText = textOf(priced);
   assert(/low confidence/i.test(pricedText), `get_resource_costs did not flag the low-confidence match: ${pricedText.slice(0, 300)}`);
   assert(/estimate/i.test(pricedText), "a label-inferred cost was not called an estimate");
-  assert(/refreshed separately/i.test(pricedText), "get_resource_costs did not warn that its dataset differs from query_costs");
+  assert(/different source/i.test(pricedText), "get_resource_costs did not warn that its source differs from query_costs");
 
   for (const [label, res] of [["dropped-filter call", dropped], ["dataset-switch call", switched], ["resource-costs call", priced]]) {
     const whole = JSON.stringify(res.result ?? {});
