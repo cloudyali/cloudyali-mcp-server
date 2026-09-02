@@ -33,10 +33,32 @@ import { TOOLS, handleToolCall } from "./handlers.js";
 import { isDirectRun } from "./cli.js";
 import { RESOURCES, readResource } from "./resources.js";
 
+/**
+ * The version the client sees, with the size of the surface it is actually
+ * serving appended — `0.1.0 (31 tools)`.
+ *
+ * An MCP server is spawned once by the client and stays resident. Rebuilding
+ * dist does nothing to the process already running, so a rebuilt-but-unrestarted
+ * server keeps answering with the old tool list and looks, from the outside,
+ * exactly like a build that did not work. That has now cost three rounds of
+ * wrong diagnosis in a day, twice by me.
+ *
+ * package.json's version does not move between these changes, so it cannot tell
+ * the two apart. The tool count does, and it is the thing that is stale in
+ * practice: "31 tools" against a client showing 24 answers the question in one
+ * glance, with no rebuild and nothing to run.
+ *
+ * Deliberately NOT a build timestamp or a commit hash: both change on every
+ * build, and build-freshness.test.ts diffs a fresh compile against the committed
+ * dist. A stamp would make that test fail on every single build — a guard broken
+ * by the thing meant to help diagnose it.
+ */
+const SERVER_VERSION = `${PACKAGE_VERSION} (${TOOLS.length} tools)`;
+
 export const server = new Server(
   {
     name: "cloudyali",
-    version: PACKAGE_VERSION,
+    version: SERVER_VERSION,
   },
   {
     capabilities: {

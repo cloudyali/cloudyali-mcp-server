@@ -30,6 +30,22 @@ This project follows test-driven development (Red → Green → Refactor):
 Every behavior change ships with a test. Name tests after the behavior, not the
 implementation. Keep the suite green before opening a PR (`npm test`).
 
+## Rebuilding is not enough — restart the client
+
+The MCP client spawns this server once and keeps the process. `npm run build`
+rewrites `dist/`; it does nothing to a process already running, which goes on
+answering with the tool list and the pages it started with. From the outside that
+is indistinguishable from a build that failed, and it has cost three rounds of
+wrong diagnosis in a single day.
+
+After a build, **restart the MCP client** before concluding anything about
+whether a change worked.
+
+`serverInfo.version` reports the live tool count — `0.1.0 (32 tools)` — so a
+stale process is visible at a glance: compare it against what the client shows.
+`src/build-freshness.test.ts` covers the other half, a `dist/` that has fallen
+behind `src/`.
+
 ## What may leave this server
 
 Everything that reaches a model — tool responses, tool descriptions, input schemas, resource bodies,
