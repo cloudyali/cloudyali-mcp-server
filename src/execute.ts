@@ -224,6 +224,14 @@ const SHAPE_AUDIT = process.env.CLOUDYALI_MCP_SHAPE_AUDIT === "1";
  * shipping without anyone deciding what it may expose, and a visible empty
  * result gets fixed while a silent passthrough does not.
  */
+/** Does this value carry anything? Used to tell a failed projection from a real empty. */
+function isNonEmpty(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v as object).length > 0;
+  return true;
+}
+
 export function shapeResponse(actionId: string, parsed: unknown): unknown {
   const policy = RESPONSE_POLICY[actionId];
   const opts: ProjectOptions | undefined = SHAPE_AUDIT ? { dropped: new Set<string>() } : undefined;
@@ -236,6 +244,24 @@ export function shapeResponse(actionId: string, parsed: unknown): unknown {
     return { note: `No response policy is defined for "${actionId}", so its body was withheld.` };
   }
   out = policy.kind === "allowlist" ? projectBody(parsed, policy.shape, opts) : redact(parsed, opts);
+
+  // A shape that does not fit its body projects to nothing, and nothing is
+  // indistinguishable from an honest empty result. views.list shipped with an
+  // array shape against an object body and reported "no saved cost views" for an
+  // account with several — a confident wrong answer, reported onward as fact,
+  // with no signal anywhere that a projection had failed.
+  //
+  // stderr is not enough: under an MCP client it is a log file nobody reads, which
+  // is the same reason the login verification code was useless there. So this goes
+  // into the body, where the model reading the result will see it.
+  if (policy.kind === "allowlist" && isNonEmpty(parsed) && !isNonEmpty(out)) {
+    process.stderr.write(
+      `cloudyali-mcp: response shape for "${actionId}" did not fit the body; nothing survived projection.\n`,
+    );
+    return {
+      error: `The response shape for "${actionId}" does not match what the API returned, so no data survived. This is a bug in this server, not an empty result — do not report it as "none found".`,
+    };
+  }
 
   if (opts?.dropped?.size) {
     process.stderr.write(

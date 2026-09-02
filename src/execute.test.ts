@@ -16,7 +16,7 @@ vi.mock("./config.js", () => ({
   STATIC_JWT_OVERRIDE: undefined,
 }));
 
-import { executeAction, requestWithRetry, trimErrorBody } from "./execute.js";
+import { executeAction, requestWithRetry, trimErrorBody, shapeResponse } from "./execute.js";
 import * as catalog from "./catalog.js";
 import { getValidAccessToken } from "./auth.js";
 
@@ -380,5 +380,31 @@ describe("error bodies never carry database internals", () => {
     });
     expect(out.allowed_transitions).toEqual(["acknowledged", "ignored"]);
     expect(out.current_status).toBe("identified");
+  });
+});
+
+describe("a shape that does not fit its body is reported, not returned as empty", () => {
+  // The failure this closes: views.list shipped with an array shape against an
+  // object body. Projection produced undefined, the tool said "no saved cost
+  // views", and that was passed on as fact about an account that had several.
+  // Nothing anywhere said a projection had failed.
+  it("returns an explicit error rather than silence when nothing survives", () => {
+    const out = shapeResponse("views.list", [{ id: "a", name: "b" }]) as { error?: string };
+    expect(out.error).toMatch(/does not match what the API returned/);
+    expect(out.error).toMatch(/bug in this server, not an empty result/);
+    expect(out.error).toMatch(/do not report it as "none found"/);
+  });
+
+  it("leaves a genuinely empty result alone", () => {
+    // The guard must not cry wolf: an account with no views really does get
+    // {views: []}, and that is an answer, not a fault.
+    expect(shapeResponse("views.list", { views: [] })).toEqual({ views: [] });
+  });
+
+  it("says nothing when the body was empty to begin with", () => {
+    for (const empty of [{}, [], null, undefined]) {
+      const out = shapeResponse("views.list", empty) as { error?: string };
+      expect(out?.error, JSON.stringify(empty)).toBeUndefined();
+    }
   });
 });

@@ -266,9 +266,16 @@ export const RESPONSE_POLICY: Readonly<Record<string, ResponsePolicy>> = {
   // query_spec is dropped: it is an internal query DSL as a raw JSON blob, and a
   // model runs a view by id rather than by reading its compiled definition.
   // created_at/updated_at are audit columns nobody reads.
+  // The handler wraps the list: writeJSON(w, 200, map[string]any{"views": views}).
+  // The single-view GET returns a bare View, which is where the array shape below
+  // came from — I read the struct and assumed the list endpoint returned []View.
+  // It does not, and an array shape against an object body projects to undefined,
+  // so the tool reported "no saved cost views" for an account that has several.
   "views.list": {
     kind: "allowlist",
-    shape: [{ id: "value", name: "value", description: "value", collection_tags: "value", default_chart_type: "value", builtin: "value" }],
+    shape: {
+      views: [{ id: "value", name: "value", description: "value", collection_tags: "value", default_chart_type: "value", builtin: "value" }],
+    },
   },
   "views.run": {
     kind: "allowlist",

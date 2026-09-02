@@ -99,22 +99,38 @@ describe("a missing resource id is an answer, not a gap", () => {
   });
 });
 
+describe("the view list shape matches what the handler actually returns", () => {
+  it("survives the {views: [...]} envelope the endpoint sends", () => {
+    // Shipped wrong: the shape was a bare array because the single-view GET returns
+    // a bare View, and I assumed the list endpoint returned []View. It returns
+    // map[string]any{"views": views}. An array shape against an object body
+    // projects to undefined, so the tool reported "no saved cost views" for an
+    // account that has several — and that answer was passed on as fact.
+    const out = project(
+      { views: [{ id: "cost-by-service", name: "Cost by service", description: "d", collection_tags: ["core"], default_chart_type: "bar", builtin: true, query_spec: {}, created_at: "x" }] },
+      shapeFor("views.list"),
+    ) as { views: unknown[] };
+    expect(out.views).toHaveLength(1);
+    expect(JSON.stringify(out)).not.toMatch(/query_spec|created_at/);
+  });
+});
+
 describe("the view definition does not leak its internals", () => {
   it("drops query_spec and the audit columns", () => {
     // query_spec is an internal query DSL as a raw blob. A model runs a view by id;
     // it has no use for the compiled definition, and relaying it is the same rule
     // that keeps storage design out of every other response.
     const out = project(
-      [{
+      { views: [{
         id: "v1", name: "Spend by service", description: "…", collection_tags: ["core"],
         default_chart_type: "bar", builtin: true,
         query_spec: { group_by: { kind: "billing_field", field: "product_service_code" }, filter: { op: "and", clauses: [] } },
         created_at: "2026-01-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
-      }],
+      }] },
       shapeFor("views.list"),
     );
     expect(JSON.stringify(out)).not.toMatch(/query_spec|product_service_code|created_at|updated_at/);
-    expect(out).toEqual([{ id: "v1", name: "Spend by service", description: "…", collection_tags: ["core"], default_chart_type: "bar", builtin: true }]);
+    expect(out).toEqual({ views: [{ id: "v1", name: "Spend by service", description: "…", collection_tags: ["core"], default_chart_type: "bar", builtin: true }] });
   });
 });
 
