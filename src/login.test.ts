@@ -175,23 +175,24 @@ describe("the callback page's auto-close, executed", () => {
     expect(t.el.textContent).toMatch(/will not let this tab close itself/i);
   });
 
-  it("cancels the countdown as soon as the user touches the page", () => {
+  it("keeps counting when the page is clicked", () => {
+    // The first version cancelled on any click. The click you make to focus the tab
+    // cancelled it, printing the very message the countdown was meant to replace —
+    // so the feature looked broken to the one person who could report it.
     const t = runAutoClose();
     vi.advanceTimersByTime(2000);
+    t.fire("mousedown");
     t.fire("keydown");
-    expect(t.el.textContent).toBe("You can close this tab.");
-    vi.advanceTimersByTime(120_000);
-    expect(t.closeCalls()).toBe(0);
-    expect(t.el.textContent).toBe("You can close this tab.");
+    t.fire("touchstart");
+    vi.advanceTimersByTime(58_000);
+    expect(t.closeCalls()).toBe(1);
   });
 
-  it("cancels on a click and on touch, not only on a keypress", () => {
-    for (const evt of ["mousedown", "touchstart"]) {
-      const t = runAutoClose();
-      t.fire(evt);
-      vi.advanceTimersByTime(120_000);
-      expect(t.closeCalls(), evt).toBe(0);
-    }
+  it("registers no interaction listeners at all", () => {
+    // Asserted structurally: a listener re-added later would silently restore the
+    // defect, and the behavioural test above would still pass if it only cancelled
+    // on an event this suite does not fire.
+    expect(callbackHtml()).not.toMatch(/addEventListener\(\s*(evt|['"](?:mousedown|keydown|touchstart|click))/);
   });
 });
 

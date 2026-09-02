@@ -138,9 +138,13 @@ export function callbackHtml(): string {
   // treat closing as an attempt, not a promise. If the browser refuses, say so
   // plainly rather than leaving a countdown that reached zero and did nothing.
   //
-  // The countdown is cancellable on any interaction: the page is also the place
-  // someone lands when they want to check what just happened, and pulling a tab
-  // out from under a reader to save them one keystroke is a bad trade.
+  // The first version cancelled the countdown on any click or keypress, to avoid
+  // pulling a tab out from under someone reading it. That was a bad trade: the
+  // click you make to bring the tab to the front cancelled it, leaving the exact
+  // "You can close this tab." the countdown replaced — a working feature that
+  // looked broken, and unfalsifiable from the outside. There is nothing on this
+  // page worth staying for, the countdown is visible for a full minute, and a
+  // refused close costs nothing. So it just counts.
   function startAutoClose() {
     var left = 60;
     var el = document.getElementById('closing');
@@ -159,10 +163,6 @@ export function callbackHtml(): string {
       // is saved either way — so this is information, not an error.
       setTimeout(function () { stop('Your browser will not let this tab close itself. You can close it.'); }, 300);
     }
-
-    ['mousedown', 'keydown', 'touchstart'].forEach(function (evt) {
-      window.addEventListener(evt, function () { stop('You can close this tab.'); }, { once: true });
-    });
 
     tick();
     timer = setInterval(tick, 1000);
