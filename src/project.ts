@@ -179,6 +179,15 @@ const REDACT_KEYS: readonly string[] = [
   "orgId",
   "channelConfig",
   "channel_config",
+  // Notification routing and delivery state. Whether a message went out, when,
+  // and down which pipe is CloudYali's own bookkeeping — it says nothing about
+  // the bill, and it sits one field away from the recipients and webhook URLs.
+  "notificationSent",
+  "notification_sent",
+  "notificationSentAt",
+  "notification_sent_at",
+  "lastNotificationDate",
+  "last_notification_date",
   "users",
   "email",
   "actor_email",

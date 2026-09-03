@@ -89,16 +89,28 @@ export const ANOMALY_TOOLS: ToolDef[] = [
 
   {
     name: "get_anomaly_alert_settings",
-    title: "Anomaly alert configuration",
+    title: "Whether anomaly alerting is on",
     description:
-      "Which channels anomaly alerts go to and at what threshold. Channel types and thresholds only — recipient addresses and webhook URLs are never returned, because those are credentials. Read-only; change alerting in the console.",
+      "Whether anomaly alerting is switched on, per account. Use it to answer 'would anyone hear about this?' — not to inspect how alerting is set up. Where alerts go and at what threshold is configured in the console and is not available here.",
     openWorld: true,
     inputSchema: obj({}),
     call: () => ({ action: "anomalies.preferences_get" }),
-    present: (body) => ({
-      structured: (body ?? {}) as Record<string, unknown>,
-      text: "Alert settings returned. Recipients and webhook URLs are withheld by design.",
-    }),
+    present: (body) => {
+      const rows = Array.isArray(body) ? body : rowsOf(body, "preferences", "data");
+      const on = rows.filter((r) => (r as Record<string, unknown>)?.enabled === true).length;
+      if (rows.length === 0) {
+        return {
+          structured: (body ?? {}) as Record<string, unknown>,
+          text: "No anomaly alerting is configured for any account. Anomalies are still detected and readable here; nobody is notified about them.",
+        };
+      }
+      return {
+        structured: (body ?? {}) as Record<string, unknown>,
+        text:
+          `Anomaly alerting is on for ${on} of ${rows.length} account(s).` +
+          (on < rows.length ? " On the rest, anomalies are detected and readable here but nobody is notified." : ""),
+      };
+    },
   },
 ];
 

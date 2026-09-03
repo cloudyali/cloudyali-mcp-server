@@ -248,12 +248,19 @@ export const RESPONSE_POLICY: Readonly<Record<string, ResponsePolicy>> = {
   "anomalies.list": { kind: "allowlist", shape: { anomalies: [ANOMALY], pagination: PAGINATION } },
   "anomalies.get": { kind: "allowlist", shape: ANOMALY },
   "anomalies.summary": { kind: "redact", reason: "aggregate counts and impact totals; audited clean" },
-  // The highest-severity item in the audit: channelConfig is an untyped JSONB
-  // blob whose schema permits Slack and webhook URLs, i.e. bearer credentials.
-  // Only the channel type survives.
+  // Alert preferences are notification plumbing, not cost data, and the whole
+  // record sits next to the highest-severity item in the audit: channelConfig,
+  // an untyped JSONB blob whose schema permits Slack and webhook URLs — bearer
+  // credentials — and whose production contents are still unverified.
+  //
+  // The channel type and threshold used to survive. They no longer do. Naming
+  // the channel is a step toward naming the recipient, and the threshold is
+  // alerting policy rather than anything about the bill. What is left answers
+  // the only question a cost conversation actually has — would anomalies on
+  // this account reach anyone — and answers nothing about how.
   "anomalies.preferences_get": {
     kind: "allowlist",
-    shape: { accountId: "value", channel: "value", thresholdAmount: "value", enabled: "value" },
+    shape: { accountId: "value", enabled: "value" },
   },
 
   // ---- inventory --------------------------------------------------------

@@ -45,6 +45,11 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   // example is still model-facing text, and a resource every model is told to read
   // is the worst possible place to keep the sentence alive.
   [/does not yet|not yet (support|emit|available|implemented)|coming soon|\broadmap\b|planned for|we are migrating|not surfaced through the MCP/i, "roadmap or internal state"],
+  // Where an alert goes, and whether one was sent. Notification plumbing says
+  // nothing about the bill and sits one field away from recipients and webhook
+  // URLs. Naming the blob in a description also advertises that credentials are
+  // in there — the same mistake as advertising a withheld detector score.
+  [/channelConfig|channel_config|webhook[_ ]?url|notificationSent|notification_sent|lastNotificationDate/i, "notification routing or delivery state"],
 ];
 
 /** Everything that actually reaches a model. Source comments do not — they are compiled away. */

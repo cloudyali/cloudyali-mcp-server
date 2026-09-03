@@ -434,8 +434,8 @@ export const CATALOG: Action[] = [
     method: "GET",
     path: "/v1/anomalies/preferences",
     category: "anomalies",
-    summary: "Get current customer's anomaly alert preferences",
-    description: "Read alert config: thresholds, notification channels, providers.",
+    summary: "Whether anomaly alerting is enabled, per account",
+    description: "Reports whether anomaly alerting is switched on for each account. Routing and thresholds are configured in the console and are not returned.",
     readOnly: true,
   },
   // NOTE: anomaly write endpoints (preferences_update, update_status, feedback)

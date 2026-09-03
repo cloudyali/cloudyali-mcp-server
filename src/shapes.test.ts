@@ -92,8 +92,14 @@ describe("shapeResponse: the reported leak, end to end", () => {
     expect(json).not.toContain("hooks.slack.com");
     expect(json).not.toContain("channelConfig");
     expect(json).not.toContain("customerId");
-    expect(json).toContain("slack"); // the channel type is still useful
-    expect(json).toContain("100");
+    // The channel type and threshold used to survive here, on the reasoning that
+    // "slack" is not itself a credential. It is still a step toward naming the
+    // recipient, and it sits one field away from a blob whose production
+    // contents are unverified — so alerting now reports only whether it is on.
+    expect(json).not.toContain("slack");
+    expect(json).not.toContain("100");
+    expect(json).toContain("enabled");
+    expect(json).toContain("123456789012");
   });
 
   it("strips budget alert recipient emails", () => {
@@ -159,6 +165,10 @@ describe("no catalog response can carry a tenant key", () => {
     customer_id: 210,
     customerId: 210,
     channelConfig: { webhook_url: "https://hooks.slack.com/services/T/B/x" },
+    notificationSent: true,
+    notification_sent: true,
+    notificationSentAt: "2026-08-31T14:56:00Z",
+    lastNotificationDate: "2026-08-31T14:56:00Z",
     email: "someone@acme.com",
     changed_by: "someone@acme.com",
     properties: { raw: "provider blob" },
@@ -193,6 +203,10 @@ describe("no catalog response can carry a tenant key", () => {
         "rule_id",
         "config_checksum",
         "rootCauseAnalysis",
+        "notificationSent",
+        "notification_sent",
+        "notificationSentAt",
+        "lastNotificationDate",
       ]) {
         expect(json, `${action.id} leaked ${needle}`).not.toContain(needle);
       }
