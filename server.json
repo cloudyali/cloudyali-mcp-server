@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cloudyali/cloudyali-mcp-server",
   "title": "CloudYali",
-  "description": "Read-only CloudYali cost, budgets, recommendations, anomalies, and inventory data for MCP clients.",
+  "description": "Read-only CloudYali cost, budgets, cost-savings opportunities, anomalies, and inventory data for MCP clients.",
   "repository": {
     "url": "https://github.com/cloudyali/cloudyali-mcp-server",
     "source": "github"

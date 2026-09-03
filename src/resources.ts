@@ -1,0 +1,173 @@
+// MCP resources: reference material the model can read on demand.
+//
+// The filter-group grammar is intricate enough that explaining it inline would
+// add ~1.5KB to six different tool descriptions — paid on every tools/list, in
+// every session, whether or not anyone builds a filter. As a resource it is
+// fetched once, only when needed, and lives in one place instead of six.
+//
+// This is the structural idea worth taking from Vantage's server: put the DSL
+// documentation in resources, not descriptions.
+
+import type { Resource } from "@modelcontextprotocol/sdk/types.js";
+import { BRAND_MARK_SVG, ECHARTS_THEME } from "./brand/assets.js";
+import { DESIGN_MD } from "./brand/design-resource.js";
+
+const FILTERS_URI = "cloudyali://filters";
+const DESIGN_URI = "cloudyali://design";
+const THEME_URI = "cloudyali://echarts-theme";
+const MARK_URI = "cloudyali://brand-mark";
+
+const FILTERS_MD = `# CloudYali cost filter grammar
+
+Filters are an **array of groups**. Groups are OR'd with each other; conditions
+within a group are combined by that group's \`operator\`.
+
+## The one rule that catches everyone
+
+Every group **must** contain a \`cloud_providers\` condition naming **exactly one**
+provider. A group without it is rejected with HTTP 400 "missing cloud provider".
+To query two providers, send two groups.
+
+## Shape
+
+\`\`\`json
+[
+  {
+    "operator": "AND",
+    "cloud_providers": [{ "operator": "equals", "value": ["AWS"] }],
+    "services":        [{ "operator": "equals", "value": ["AmazonEC2"] }],
+    "regions":         [{ "operator": "not_equals", "value": ["us-west-2"] }]
+  }
+]
+\`\`\`
+
+- Group \`operator\`: \`"AND"\` or \`"OR"\`.
+- Condition \`operator\`: \`"equals"\` or \`"not_equals"\`.
+- \`value\` is **singular** and always an **array**.
+
+## Dimensions
+
+\`cloud_providers\`, \`accounts\`, \`regions\`, \`services\`, \`cost_types\`,
+\`usage_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\`.
+
+Tags use a different shape:
+
+\`\`\`json
+"tags": [{ "key": "env", "value": { "operator": "equals", "value": ["prod"] } }]
+\`\`\`
+
+## Dimensions the API silently ignores, per provider
+
+Not every provider supports every dimension. Where one does not, **the condition is dropped with no error and a 200 response** — you
+get provider-wide rows that look like a filtered answer.
+
+| Provider | Silently ignored |
+|---|---|
+| AWS | \`usage_types\` |
+| GCP | \`usage_types\`, \`resource_types\` |
+| Azure | \`resource_types\` |
+| Databricks | \`regions\`, \`resource_types\` |
+| Anthropic | \`regions\`, \`cost_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\` |
+| Fastly | \`cost_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\` |
+| OpenAI | \`regions\`, \`cost_types\`, \`resource_types\`, \`resource_names\`, \`resource_arns\` |
+
+The cost tools detect this and prefix a warning to their summary, so you do not
+have to hold this list in mind. When you see that warning, either narrow the
+returned rows yourself or move the dimension into \`group_by_dimensions\` and sum
+the groups you want — do not report the raw total as filtered.
+
+## \`resource_names\` changes which source answers
+
+For AWS, GCP and Azure, adding a \`resource_names\` condition does not just narrow the query — it
+changes **where the answer comes from**. The same question asked with and without that filter is
+answered from different data, and nothing in either response says so.
+
+What you can observe, and should act on:
+
+- **The totals are not comparable.** A period can return rows with the filter and nothing without
+  it, or the two can differ by an amount that looks like rounding and is not.
+- **AWS and GCP cannot group by usage type in this mode.** The request does not fail — every row
+  comes back in a single \`Unknown\` bucket. (Azure is unaffected.)
+- **An empty result is not evidence of zero spend.** The API can answer this shape of query by
+  omitting a provider entirely: HTTP 200, no rows, no mention of the provider.
+
+The cost tools detect the switch and warn. When you see that warning:
+
+- report the figure as a per-resource one, not as the same measurement as an unfiltered total;
+- if it disagrees with an unfiltered total, **do not account for the difference.** Billing lag, a
+  partial month, allocation drift — any explanation you could offer would be invented, because the
+  two figures answer different questions. Say they are not comparable, and name which one you used;
+- do not fall back to grouping by usage type on AWS or GCP, because that is one of the things this
+  mode breaks.
+
+\`get_resource_costs\` reads the per-resource source too, so the same non-comparability applies to
+anything summed from it. It also returns a \`match_confidence\` per resource: \`high\` means the
+billing record carried the resource's own identifier, \`medium\` means the match was made on
+resource name (a same-named resource elsewhere may be included), and \`low\` means the cost was
+inferred from labels on other resources. Only \`high\` should be reported as a billed figure.
+
+## Failure mode worth knowing
+
+Unknown keys and unknown operators are **silently ignored** server-side. A filter
+written with plural \`"values"\`, or operator \`"in"\`, does not error — it is
+dropped, and you get **unfiltered provider-wide data** that looks like a valid
+answer. If a number looks too large, suspect the filter before suspecting the
+data.
+
+Discover valid values for a dimension with \`resolve_facets\`; they are
+account-specific, and the answer narrows as you add selections.
+
+## Inventory tag filters are a separate grammar
+
+\`list_resources\` and \`search_resources\` take \`tags\` as
+\`[{ key, operator, value: [...] }]\`, where \`operator\` is one of
+\`equal\`, \`not_equal\`, \`exists\`, \`not_exists\`, \`empty\`, \`not_empty\`.
+Note \`equal\`, not \`equals\` — the cost API and the inventory API differ here,
+and the wrong spelling is silently dropped rather than rejected.
+`;
+
+export const RESOURCES: Resource[] = [
+  {
+    uri: DESIGN_URI,
+    name: "CloudYali chart style",
+    description:
+      "How to draw CloudYali data so it looks like CloudYali: the categorical palette, which colours are reserved for meaning, and the provenance stamp every generated artifact carries at the top. Read before building any chart, dashboard, report or artifact — the palette and the reserved colours cannot be guessed.",
+    mimeType: "text/markdown",
+  },
+  {
+    uri: THEME_URI,
+    name: "CloudYali ECharts theme",
+    description:
+      "The ECharts 5 theme object, colours resolved to literal hex. Register with echarts.registerTheme('cloudyali', theme). Fetch only when you are actually rendering with ECharts.",
+    mimeType: "application/json",
+  },
+  {
+    uri: MARK_URI,
+    name: "CloudYali brand mark",
+    description:
+      "The CloudYali logo as inline SVG, for the stamp at the top of a generated artifact. Self-contained \u2014 it carries its own background, so it sits on a light or dark chart unchanged. Paste verbatim.",
+    mimeType: "image/svg+xml",
+  },
+  {
+    uri: FILTERS_URI,
+    name: "Cost filter grammar",
+    description:
+      "How to build the filters argument for the cost tools, and the silent-drop failure mode to watch for. Read before constructing a filter.",
+    mimeType: "text/markdown",
+  },
+];
+
+const BODIES: Record<string, { mimeType: string; text: string }> = {
+  [FILTERS_URI]: { mimeType: "text/markdown", text: FILTERS_MD },
+  [DESIGN_URI]: { mimeType: "text/markdown", text: DESIGN_MD },
+  // Pretty-printed rather than minified: this gets read as much as it gets pasted, and a model
+  // that can see the structure is less likely to invent a key that does not exist.
+  [THEME_URI]: { mimeType: "application/json", text: JSON.stringify(ECHARTS_THEME, null, 2) },
+  [MARK_URI]: { mimeType: "image/svg+xml", text: BRAND_MARK_SVG },
+};
+
+export function readResource(uri: string): { uri: string; mimeType: string; text: string } {
+  const body = BODIES[uri];
+  if (!body) throw new Error(`Unknown resource: ${uri}`);
+  return { uri, mimeType: body.mimeType, text: body.text };
+}

@@ -7,8 +7,12 @@ import {
   assertPortalReachable,
   awaitLogin,
   callbackHtml,
+  clearLogin,
+  currentLogin,
+  formatExpiry,
   loginSuccessMessage,
   readJsonBody,
+  startLogin,
   verificationCodeFromState,
 } from "./login.js";
 import { StoredCredentials, saveCredentials } from "./tokenStore.js";
@@ -41,10 +45,31 @@ function reqFrom(body: string): IncomingMessage {
 }
 
 describe("loginSuccessMessage", () => {
-  it("includes the email and the ISO expiry", () => {
+  it("includes the email and the expiry in both UTC and local time", () => {
     const msg = loginSuccessMessage(creds);
     expect(msg).toContain("user@example.com");
-    expect(msg).toContain("2026-01-01T00:00:00.000Z");
+    // UTC alone forces the reader to do offset arithmetic to answer "do I need
+    // to act soon"; local alone is ambiguous when the transcript is read from
+    // somewhere else. Both, with the zone named.
+    expect(msg).toMatch(/\bUTC\b/);
+    expect(msg).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  });
+
+  it("collapses the repeated date when UTC and local fall on the same day", () => {
+    // 09:10 UTC is 14:40 in Asia/Calcutta — same calendar day, so the date
+    // should appear once, not twice.
+    const msg = formatExpiry(Math.floor(Date.parse("2026-09-01T09:10:00Z") / 1000));
+    expect(msg).toMatch(/UTC \(\d{2}:\d{2} /);
+  });
+
+  it("keeps both dates when local time rolls into the next day", () => {
+    const msg = formatExpiry(Math.floor(Date.parse("2026-09-01T20:10:00Z") / 1000));
+    const dates = msg.match(/\d{2} \w+ 2026/g) ?? [];
+    expect(dates.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("degrades to words rather than 'Invalid Date' on a nonsense timestamp", () => {
+    expect(formatExpiry(Number.NaN)).toBe("an unknown time");
   });
 
   it("falls back to a placeholder when email is missing", () => {
@@ -71,6 +96,103 @@ describe("callbackHtml", () => {
     expect(html).toContain("/token");
     expect(html).toContain("history.replaceState");
     expect(html).toContain("escapeHtml");
+  });
+
+  it("arms the auto-close only on the success branch", () => {
+    // A failed sign-in leaves an error on screen that the user needs to read,
+    // and a cancelled one is a decision they just made. Neither should have the
+    // tab pulled out from under it.
+    const html = callbackHtml();
+    const success = html.slice(html.indexOf("if (res.ok)"), html.indexOf("return res.text()"));
+    expect(success).toContain("startAutoClose()");
+    const failure = html.slice(html.indexOf("return res.text()"));
+    expect(failure).not.toContain("startAutoClose()");
+    expect(html.slice(html.indexOf("access_denied"), html.indexOf("if (res.ok)"))).not.toContain("startAutoClose");
+  });
+});
+
+// The callback page's script is a string, so it never runs in the unit suite and
+// nothing catches a typo in it. The auto-close has three branches that all end
+// with the tab still open if they are wrong, so it gets a real execution against
+// a hand-rolled DOM rather than a substring assertion.
+describe("the callback page's auto-close, executed", () => {
+  function runAutoClose() {
+    const html = callbackHtml();
+    const body = html.slice(html.indexOf("function startAutoClose()"), html.indexOf("var data = Object.fromEntries"));
+
+    const el = { textContent: "" };
+    const listeners: Record<string, Array<() => void>> = {};
+    let closeCalls = 0;
+
+    const win = {
+      close: () => {
+        closeCalls++;
+      },
+      addEventListener: (evt: string, fn: () => void) => {
+        (listeners[evt] ??= []).push(fn);
+      },
+    };
+    const doc = { getElementById: () => el };
+
+    // eslint-disable-next-line no-new-func
+    const make = new Function("window", "document", `${body}; return startAutoClose;`);
+    make(win, doc)();
+
+    return {
+      el,
+      closeCalls: () => closeCalls,
+      fire: (evt: string) => (listeners[evt] ?? []).forEach((f) => f()),
+    };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("counts down from 60 and closes when it reaches zero", () => {
+    const t = runAutoClose();
+    expect(t.el.textContent).toBe("Closing this tab in 60s.");
+    vi.advanceTimersByTime(1000);
+    expect(t.el.textContent).toBe("Closing this tab in 59s.");
+    vi.advanceTimersByTime(59_000);
+    expect(t.closeCalls()).toBe(1);
+  });
+
+  it("does not close early, and does not close twice", () => {
+    const t = runAutoClose();
+    vi.advanceTimersByTime(59_000);
+    expect(t.closeCalls()).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expect(t.closeCalls()).toBe(1);
+  });
+
+  it("tells the truth when the browser refuses to close the tab", () => {
+    // window.close() is a no-op on a tab the script did not open, which is every
+    // tab this page ever runs in when the CLI hands off to the OS browser. A
+    // countdown that hits zero and silently does nothing reads as a bug.
+    const t = runAutoClose();
+    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(300);
+    expect(t.el.textContent).toMatch(/will not let this tab close itself/i);
+  });
+
+  it("keeps counting when the page is clicked", () => {
+    // The first version cancelled on any click. The click you make to focus the tab
+    // cancelled it, printing the very message the countdown was meant to replace —
+    // so the feature looked broken to the one person who could report it.
+    const t = runAutoClose();
+    vi.advanceTimersByTime(2000);
+    t.fire("mousedown");
+    t.fire("keydown");
+    t.fire("touchstart");
+    vi.advanceTimersByTime(58_000);
+    expect(t.closeCalls()).toBe(1);
+  });
+
+  it("registers no interaction listeners at all", () => {
+    // Asserted structurally: a listener re-added later would silently restore the
+    // defect, and the behavioural test above would still pass if it only cancelled
+    // on an event this suite does not fire.
+    expect(callbackHtml()).not.toMatch(/addEventListener\(\s*(evt|['"](?:mousedown|keydown|touchstart|click))/);
   });
 });
 
@@ -127,9 +249,13 @@ describe("awaitLogin (browser callback server)", () => {
     store.nowEpochSeconds.mockReturnValue(1000);
     // assertPortalReachable() must pass so awaitLogin proceeds to bind the server.
     global.fetch = vi.fn().mockResolvedValue({ status: 200 }) as unknown as typeof fetch;
+    // startLogin is idempotent by design — a pending session is returned rather
+    // than starting a second listener. Good for the tool, bad for test isolation.
+    clearLogin();
   });
   afterEach(() => {
     global.fetch = realFetch;
+    clearLogin();
   });
 
   async function waitFor<T>(fn: () => T | undefined, tries = 400): Promise<T> {
@@ -228,5 +354,160 @@ describe("awaitLogin (browser callback server)", () => {
   it("times out when no callback arrives", async () => {
     const { promise } = await beginLogin({ timeoutMs: 80 });
     await expect(promise).rejects.toThrow(/Timed out/i);
+  });
+});
+
+describe("startLogin: the two-phase session machine", () => {
+  const spawnMock = vi.mocked(spawn);
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockReturnValue({ on: vi.fn(), unref: vi.fn() } as unknown as ChildProcess);
+    store.nowEpochSeconds.mockReturnValue(1000);
+    global.fetch = vi.fn().mockResolvedValue({ status: 200 }) as unknown as typeof fetch;
+    clearLogin();
+  });
+  afterEach(() => {
+    global.fetch = realFetch;
+    clearLogin();
+  });
+
+  function spawnedUrl(): string | undefined {
+    for (const call of spawnMock.mock.calls) {
+      const args = call[1] as string[] | undefined;
+      const url = args?.find((a) => typeof a === "string" && a.startsWith("http"));
+      if (url) return url;
+    }
+    return undefined;
+  }
+
+  function post(port: number, body: Record<string, string>): Promise<Response> {
+    return realFetch(`http://127.0.0.1:${port}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      if (currentLogin()?.status !== "pending") return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  it("returns before the user has done anything — that is the whole point", async () => {
+    const t0 = Date.now();
+    const session = await startLogin(60_000);
+    // A blocking call returned only after authorization, which put the
+    // verification code on the wrong side of the decision it exists to inform.
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(session.status).toBe("pending");
+    expect(session.code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    expect(session.portalUrl).toContain("/cli-login");
+  });
+
+  it("shows the user the same code the portal will display", async () => {
+    // The check is worthless if the two are derived independently. Both come
+    // from the state value, so a rogue process cannot produce a matching pair.
+    const session = await startLogin(60_000);
+    const url = new URL(session.portalUrl);
+    const state = url.searchParams.get("state") as string;
+    expect(session.code).toBe(verificationCodeFromState(state));
+    expect(url.searchParams.get("code")).toBe(session.code);
+  });
+
+  it("binds the callback listener to loopback only", async () => {
+    const session = await startLogin(60_000);
+    const redirect = new URL(new URL(session.portalUrl).searchParams.get("redirect_uri") as string);
+    expect(redirect.hostname).toBe("127.0.0.1");
+  });
+
+  it("is idempotent: a second call joins the pending session rather than opening another browser tab", async () => {
+    const a = await startLogin(60_000);
+    const b = await startLogin(60_000);
+    expect(b).toBe(a);
+    expect(b.code).toBe(a.code);
+    // One browser open, not two.
+    expect(spawnMock.mock.calls.length).toBe(1);
+  });
+
+  it("moves to done and exposes the credentials once the browser posts back", async () => {
+    const session = await startLogin(60_000);
+    const port = Number(new URL(new URL(session.portalUrl).searchParams.get("redirect_uri") as string).port);
+    const state = new URL(session.portalUrl).searchParams.get("state") as string;
+
+    const res = await post(port, {
+      state,
+      access_token: "at",
+      refresh_token: "rt",
+      email: "user@example.com",
+      expires_at: "1767225600",
+    });
+    expect(res.status).toBe(200);
+    await settle();
+
+    const after = currentLogin();
+    expect(after?.status).toBe("done");
+    expect(after?.credentials?.email).toBe("user@example.com");
+  });
+
+  it("moves to failed on a state mismatch, and keeps the reason", async () => {
+    const session = await startLogin(60_000);
+    const port = Number(new URL(new URL(session.portalUrl).searchParams.get("redirect_uri") as string).port);
+
+    await post(port, { state: "wrong", access_token: "a", refresh_token: "r" });
+    await settle();
+
+    const after = currentLogin();
+    expect(after?.status).toBe("failed");
+    expect(after?.error?.message).toMatch(/CSRF/i);
+  });
+
+  it("moves to failed when the user cancels in the browser", async () => {
+    const session = await startLogin(60_000);
+    const port = Number(new URL(new URL(session.portalUrl).searchParams.get("redirect_uri") as string).port);
+    const state = new URL(session.portalUrl).searchParams.get("state") as string;
+
+    await post(port, { state, error: "access_denied" });
+    await settle();
+
+    expect(currentLogin()?.status).toBe("failed");
+    expect(currentLogin()?.error?.message).toMatch(/cancelled/i);
+  });
+
+  it("expires a stale pending session on read instead of waiting forever", async () => {
+    // A session nobody finished must not block a later attempt.
+    await startLogin(20);
+    await new Promise((r) => setTimeout(r, 40));
+    const after = currentLogin();
+    expect(after?.status).toBe("failed");
+    expect(after?.error?.message).toMatch(/timed out/i);
+  });
+
+  it("starts a fresh session after the previous one is cleared", async () => {
+    const first = await startLogin(60_000);
+    clearLogin();
+    expect(currentLogin()).toBeNull();
+    const second = await startLogin(60_000);
+    expect(second.code).not.toBe(first.code);
+    expect(spawnMock.mock.calls.length).toBe(2);
+  });
+
+  it("refuses to start when the portal is unreachable, before opening a tab", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED")) as unknown as typeof fetch;
+    await expect(startLogin(60_000)).rejects.toThrow(/unreachable/);
+    expect(spawnedUrl()).toBeUndefined();
+    expect(currentLogin()).toBeNull();
+  });
+
+  it("aborts cleanly when the caller cancels", async () => {
+    const ac = new AbortController();
+    const session = await startLogin(60_000, ac.signal);
+    ac.abort();
+    await settle();
+    expect(session.status).toBe("failed");
+    expect(session.error?.message).toMatch(/aborted/i);
   });
 });

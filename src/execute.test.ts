@@ -16,7 +16,7 @@ vi.mock("./config.js", () => ({
   STATIC_JWT_OVERRIDE: undefined,
 }));
 
-import { executeAction, requestWithRetry } from "./execute.js";
+import { executeAction, requestWithRetry, trimErrorBody, shapeResponse } from "./execute.js";
 import * as catalog from "./catalog.js";
 import { getValidAccessToken } from "./auth.js";
 
@@ -153,7 +153,7 @@ describe("executeAction", () => {
     expect(vi.mocked(fetch).mock.calls[0][1]?.body).toBe("{}");
   });
 
-  it("returns a non-JSON response body as a raw string", async () => {
+  it("wraps a non-JSON error body as a capped error string", async () => {
     mockToken.mockResolvedValue("tok-1");
     // 400 is non-transient (no retry) and its body is not JSON.
     vi.mocked(fetch).mockResolvedValue(new Response("Bad Request: not json", { status: 400 }));
@@ -161,7 +161,62 @@ describe("executeAction", () => {
     const result = JSON.parse(await executeAction({ id: "recommendations.summary" }));
     expect(result.status).toBe(400);
     expect(result.ok).toBe(false);
-    expect(result.body).toBe("Bad Request: not json");
+    expect(result.body).toEqual({ error: "Bad Request: not json" });
+  });
+
+  it("echoes only the path template, never the substituted URL", async () => {
+    mockToken.mockResolvedValue("tok-1");
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}));
+
+    const result = JSON.parse(
+      await executeAction({
+        id: "anomalies.summary",
+        query_params: { startDate: "2026-05-01", endDate: "2026-05-31" },
+      }),
+    );
+
+    expect(result.request.path).toBe("/v1/anomalies/summary");
+    expect(result.request.url).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("api.example.com");
+    expect(JSON.stringify(result)).not.toContain("2026-05-01");
+  });
+
+  it("trims a non-2xx JSON body to the error-contract allowlist", async () => {
+    mockToken.mockResolvedValue("tok-1");
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(500, {
+        code: 500,
+        message: "internal error",
+        stack: "goroutine 1 [running]: main.leak(0xc000)",
+        query: "SELECT * FROM cost_opportunity WHERE ...",
+        huge: "x".repeat(5000),
+      }),
+    );
+
+    const result = JSON.parse(await executeAction({ id: "recommendations.summary" }));
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ code: 500, message: "internal error" });
+    expect(JSON.stringify(result)).not.toContain("goroutine");
+    expect(JSON.stringify(result)).not.toContain("SELECT");
+  });
+
+  it("keeps transition-result retry fields on a 409 and passes 2xx bodies through", async () => {
+    mockToken.mockResolvedValue("tok-1");
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(409, {
+        error: "illegal transition",
+        current_status: "identified",
+        allowed_transitions: ["acknowledged", "ignored"],
+        internal_hint: "should be dropped",
+      }),
+    );
+
+    const result = JSON.parse(await executeAction({ id: "recommendations.summary" }));
+    expect(result.body).toEqual({
+      error: "illegal transition",
+      current_status: "identified",
+      allowed_transitions: ["acknowledged", "ignored"],
+    });
   });
 });
 
@@ -272,5 +327,113 @@ describe("requestWithRetry", () => {
     expect(captured?.aborted).toBe(false);
     external.abort();
     expect(captured?.aborted).toBe(true);
+  });
+});
+
+describe("error bodies never carry database internals", () => {
+  it("withholds a Postgres column error instead of relaying it", () => {
+    // The report that prompted this: order_by:"cost" produced HTTP 500 with
+    // `column "cost" does not exist` — schema disclosure wearing the costume of
+    // a helpful error. pkg/svcerror puts the raw Go error in `details`.
+    const out = trimErrorBody({
+      code: "internal_error",
+      message: "query failed",
+      details: 'ERROR: column "cost" does not exist (SQLSTATE 42703)',
+    });
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("cost\\\" does not exist");
+    expect(json).not.toContain("SQLSTATE");
+    expect(json).not.toContain("details");
+    expect(out.code).toBe("internal_error");
+  });
+
+  it("scrubs a driver error even when it arrives as `message`", () => {
+    // Dropping the field is not enough on its own — anyone can wrap a driver
+    // error into the authored message field.
+    const out = trimErrorBody({ message: 'pq: relation "cur_data_daily" does not exist' });
+    expect(String(out.message)).not.toContain("cur_data_daily");
+    expect(String(out.message)).toMatch(/check the arguments/i);
+  });
+
+  it("scrubs a Go stack trace arriving as a bare string body", () => {
+    const out = trimErrorBody("goroutine 42 [running]:\nmain.handler(/app/queryService/service/cur.go:118)");
+    expect(String(out.error)).not.toContain("queryService");
+    expect(String(out.error)).not.toContain("goroutine");
+  });
+
+  it("scrubs an internal hostname and a connection string", () => {
+    expect(String(trimErrorBody({ message: "dial tcp inventory-svc.svc.cluster.local:5432" }).message))
+      .not.toContain("cluster.local");
+    expect(String(trimErrorBody({ message: "postgres://user@db/cy" }).message)).not.toContain("postgres://");
+  });
+
+  it("leaves an ordinary authored message alone", () => {
+    const out = trimErrorBody({ code: "not_found", message: "No budget with that id." });
+    expect(out.message).toBe("No budget with that id.");
+  });
+
+  it("keeps the savings retry contract intact", () => {
+    const out = trimErrorBody({
+      error: "illegal transition",
+      current_status: "identified",
+      allowed_transitions: ["acknowledged", "ignored"],
+    });
+    expect(out.allowed_transitions).toEqual(["acknowledged", "ignored"]);
+    expect(out.current_status).toBe("identified");
+  });
+});
+
+describe("a shape that does not fit its body is reported, not returned as empty", () => {
+  // The failure this closes: views.list shipped with an array shape against an
+  // object body. Projection produced undefined, the tool said "no saved cost
+  // views", and that was passed on as fact about an account that had several.
+  // Nothing anywhere said a projection had failed.
+  it("returns an explicit error rather than silence when nothing survives", () => {
+    const out = shapeResponse("views.list", [{ id: "a", name: "b" }]) as { error?: string };
+    expect(out.error).toMatch(/does not match what the API returned/);
+    expect(out.error).toMatch(/bug in this server, not an empty result/);
+    expect(out.error).toMatch(/do not report it as "none found"/);
+  });
+
+  it("leaves a genuinely empty result alone", () => {
+    // The guard must not cry wolf: an account with no views really does get
+    // {views: []}, and that is an answer, not a fault.
+    expect(shapeResponse("views.list", { views: [] })).toEqual({ views: [] });
+  });
+
+  it("says nothing when the body was empty to begin with", () => {
+    for (const empty of [{}, [], null, undefined]) {
+      const out = shapeResponse("views.list", empty) as { error?: string };
+      expect(out?.error, JSON.stringify(empty)).toBeUndefined();
+    }
+  });
+
+  // The views.list guard only fires when the WHOLE body collapses. facets.resolve
+  // shipped with `dimensions: "map"` against a map of objects: domain and as_of
+  // survived, dimensions emptied, and the result was a well-formed body saying
+  // the account had no filterable dimensions at all. Half-right is the dangerous
+  // half here — it reads as an answer.
+  it("catches a single field collapsing inside an otherwise healthy body", () => {
+    const out = shapeResponse("facets.resolve", {
+      domain: "cost",
+      as_of: "2026-08-31T00:00:00Z",
+      dimensions: { service: { values: [{ value: "AmazonEC2", status: "active" }], truncated: false } },
+    }) as { error?: string };
+    expect(out.error).toBeUndefined();
+  });
+
+  it("names the field that emptied so the fix has an address", () => {
+    const out = shapeResponse("budgets.get", {
+      name: "prod",
+      amount: 100,
+      filters: [{ id: 1, budgetId: 2 }],
+    }) as { error?: string };
+    expect(out.error).toMatch(/filters\[0\]/);
+    expect(out.error).toMatch(/do not report .* as empty or absent/);
+  });
+
+  it("still leaves a real empty container alone", () => {
+    const out = shapeResponse("budgets.get", { name: "prod", amount: 100, filters: [] }) as { error?: string };
+    expect(out.error).toBeUndefined();
   });
 });

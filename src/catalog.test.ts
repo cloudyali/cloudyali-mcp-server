@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { TOOL_DEFS } from "./tools/index.js";
 import { Action, CATALOG, READ_ONLY_CATALOG, findAction, isBlockedAction, searchActions } from "./catalog.js";
+
+// Minimal required args for the tools whose call() reads them.
+const SAMPLE: Record<string, Record<string, unknown>> = {
+};
 
 function makeAction(overrides: Partial<Action>): Action {
   return {
@@ -27,8 +32,30 @@ describe("isBlockedAction", () => {
     expect(isBlockedAction(patch).blocked).toBe(true);
   });
 
-  it("blocks actions marked readOnly false", () => {
+  it("blocks any action marked readOnly false", () => {
     expect(isBlockedAction(makeAction({ readOnly: false })).blocked).toBe(true);
+  });
+
+  it("blocks a savings-lifecycle write — there is no write allowlist", () => {
+    // This action was briefly exposed and has been withdrawn: the MCP is
+    // read-only with no exceptions. A POST to a savings path is still a write.
+    const t = makeAction({
+      id: "recommendations.transition",
+      method: "POST",
+      path: "/v1/savings/opportunities/:id/transition",
+      readOnly: false,
+    });
+    expect(isBlockedAction(t).blocked).toBe(true);
+  });
+
+  it("blocks a write whatever its id or path suggests", () => {
+    const other = makeAction({
+      id: "savings.delete_everything",
+      method: "POST",
+      path: "/v1/savings/opportunities/:id/nuke",
+      readOnly: false,
+    });
+    expect(isBlockedAction(other).blocked).toBe(true);
   });
 
   it("blocks denylisted paths regardless of method", () => {
@@ -43,13 +70,17 @@ describe("isBlockedAction", () => {
   });
 });
 
-describe("CATALOG read-only invariants", () => {
-  it("contains only readOnly actions that pass the blocklist", () => {
+describe("CATALOG exposure invariants", () => {
+  it("exposes every catalog entry — none blocked", () => {
     for (const a of CATALOG) {
-      expect(a.readOnly, `${a.id} must be readOnly`).toBe(true);
       expect(isBlockedAction(a).blocked, `${a.id} must not be blocked`).toBe(false);
     }
     expect(READ_ONLY_CATALOG).toHaveLength(CATALOG.length);
+  });
+
+  it("marks every catalog entry readOnly — the MCP exposes no writes", () => {
+    const writes = CATALOG.filter((a) => !a.readOnly).map((a) => a.id);
+    expect(writes, "no catalog entry may be a write").toEqual([]);
   });
 
   it("contains only GET and POST methods", () => {
@@ -57,15 +88,49 @@ describe("CATALOG read-only invariants", () => {
       expect(["GET", "POST"], `${a.id} method`).toContain(a.method);
     }
   });
+
+  it("has no duplicate action ids (a duplicated section doubles search results)", () => {
+    const ids = CATALOG.map((a) => a.id);
+    const dupes = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+    expect(dupes, `duplicate ids: ${dupes.join(", ")}`).toHaveLength(0);
+    expect(new Set(ids).size).toBe(CATALOG.length);
+  });
 });
 
-describe("catalog ↔ backend contract", () => {
-  it("recommendations.summary declares the filters its backend accepts", () => {
-    const a = findAction("recommendations.summary");
-    expect(a?.queryParams).toBeDefined();
-    for (const p of ["provider", "status", "resourceType", "minSavings", "assignedUser"]) {
+describe("catalog ↔ savings backend contract (US-032)", () => {
+  it("recommendations.list targets the savings queue with the US-021 filter set", () => {
+    const a = findAction("recommendations.list");
+    expect(a?.path).toBe("/v1/savings/opportunities");
+    expect(a?.readOnly).toBe(true);
+    for (const p of ["provider", "state", "category", "risk", "effort", "account", "region", "parent", "assignee", "flagged", "minSavings", "text", "sort", "limit", "offset"]) {
       expect(a?.queryParams?.[p], `queryParams.${p}`).toBeDefined();
     }
+  });
+
+  it("recommendations.list sort enum matches the backend's accepted values", () => {
+    const sort = findAction("recommendations.list")?.queryParams?.sort;
+    expect(sort?.enum).toEqual(["savings_desc", "savings_asc", "detected_desc", "detected_asc"]);
+  });
+
+  it("recommendations.summary targets /v1/savings/summary and accepts the same filters plus from/to", () => {
+    const a = findAction("recommendations.summary");
+    expect(a?.path).toBe("/v1/savings/summary");
+    for (const p of ["provider", "state", "category", "minSavings", "from", "to"]) {
+      expect(a?.queryParams?.[p], `queryParams.${p}`).toBeDefined();
+    }
+  });
+
+  it("recommendations.get targets the detail endpoint with a required id path param", () => {
+    const a = findAction("recommendations.get");
+    expect(a?.path).toBe("/v1/savings/opportunities/:id");
+    expect(a?.pathParams?.id?.required).toBe(true);
+  });
+
+  it("no longer exposes the savings lifecycle transition", () => {
+    // Withdrawn deliberately: the published server is read-only, so the
+    // "what this cannot do" promise in the docs is true without an asterisk.
+    expect(findAction("recommendations.transition")).toBeUndefined();
+    expect(CATALOG.some((a) => a.path.includes("/transition"))).toBe(false);
   });
 
   it("anomalies.summary declares startDate/endDate", () => {
@@ -74,21 +139,11 @@ describe("catalog ↔ backend contract", () => {
     expect(a?.queryParams?.endDate).toBeDefined();
   });
 
-  it("assignedUser params use comma serialization (backend splits on comma)", () => {
-    expect(findAction("recommendations.list")?.queryParams?.assignedUser?.serializeArray).toBe("comma");
-    expect(findAction("recommendations.summary")?.queryParams?.assignedUser?.serializeArray).toBe("comma");
-  });
-
   it("cost.aggregate documents the interval values the backend matches", () => {
     // Backend matches only daily/weekly/monthly; 'day' silently drops the time series.
     const desc = findAction("cost.aggregate")?.bodyParams?.interval?.description ?? "";
     expect(desc).toMatch(/daily.*weekly.*monthly/);
     expect(desc).not.toMatch(/\bday\b/);
-  });
-
-  it("recommendations.list does not invite comma-separated multi-values (backend rejects them)", () => {
-    const desc = findAction("recommendations.list")?.queryParams?.provider?.description ?? "";
-    expect(desc.toLowerCase()).not.toContain("comma-separate");
   });
 
   it("cost cost_type is an object with an inclusions array, not a string (backend binds {inclusions:[]})", () => {
@@ -115,19 +170,6 @@ describe("catalog ↔ backend contract", () => {
     }
   });
 
-  it("recommendations.summary types provider/resourceType as single-value (backend drops multi-value)", () => {
-    // Backend applies the summary provider/resourceType filter ONLY when exactly one
-    // value is given; multiple values silently return the all-providers rollup. So
-    // these must be single-value (string), unlike recommendations.list which does IN.
-    const a = findAction("recommendations.summary");
-    expect(a?.queryParams?.provider?.type, "summary provider type").toBe("string");
-    expect(a?.queryParams?.resourceType?.type, "summary resourceType type").toBe("string");
-    // status remains genuinely multi-value on the summary endpoint.
-    expect(a?.queryParams?.status?.type, "summary status type").toBe("array");
-    // The misleading "same filters as recommendations.list" claim must be gone.
-    expect(a?.description ?? "").not.toContain("same filters as recommendations.list");
-  });
-
   it("cost.report marks start_time/end_time required (backend 400s without them)", () => {
     const a = findAction("cost.report");
     expect(a?.bodyParams?.start_time?.required, "start_time required").toBe(true);
@@ -147,14 +189,6 @@ describe("catalog ↔ backend contract", () => {
     // Backend returns only health counts — the old 'budgeted amount / actual spend' claim was false.
     expect(desc.toLowerCase()).not.toContain("actual spend");
     expect(desc.toLowerCase()).not.toContain("total budgeted amount");
-  });
-
-  it("recommendations.filter_options names the fields the backend actually returns", () => {
-    const desc = findAction("recommendations.filter_options")?.description ?? "";
-    expect(desc).toContain("opportunityTypes");
-    expect(desc).toContain("resourceLocations");
-    // It does NOT return providers/statuses/users — those claims must be gone.
-    expect(desc.toLowerCase()).not.toContain("assignable users");
   });
 
   it("inventory.search state default is 'all', not 'active' (backend treats absent as all)", () => {
@@ -294,23 +328,21 @@ describe("budgets catalog", () => {
 });
 
 describe("handlers ↔ catalog contract", () => {
-  it("search tool category enum covers every catalog category", async () => {
-    const { TOOLS } = await import("./handlers.js");
-    const search = TOOLS.find((t) => t.name === "search_actions");
-    const schema = search?.inputSchema as {
-      properties?: { category?: { enum?: string[] } };
-    };
-    const enumVals = schema?.properties?.category?.enum ?? [];
+  it("every catalog category is reachable through a typed tool", () => {
+    // The proxy's category enum used to be the contract here. Typed tools
+    // replaced it, so the invariant becomes: no category is stranded without a
+    // tool that reads it.
+    const covered = new Set(TOOL_DEFS.map((t) => findAction(t.call(SAMPLE[t.name] ?? {}).action)?.category));
     for (const c of new Set(CATALOG.map((a) => a.category))) {
-      expect(enumVals, `search_actions category enum must include "${c}"`).toContain(c);
+      expect([...covered], `no typed tool reads the "${c}" category`).toContain(c);
     }
   });
 });
 
 describe("searchActions", () => {
   it("finds actions by id terms", () => {
-    const results = searchActions("top savings recommendations");
-    expect(results.map((a) => a.id)).toContain("recommendations.top_savings");
+    const results = searchActions("savings opportunities list");
+    expect(results.map((a) => a.id)).toContain("recommendations.list");
   });
 
   it("respects the category filter", () => {

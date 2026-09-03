@@ -30,6 +30,45 @@ This project follows test-driven development (Red → Green → Refactor):
 Every behavior change ships with a test. Name tests after the behavior, not the
 implementation. Keep the suite green before opening a PR (`npm test`).
 
+## Rebuilding is not enough — restart the client
+
+The MCP client spawns this server once and keeps the process. `npm run build`
+rewrites `dist/`; it does nothing to a process already running, which goes on
+answering with the tool list and the pages it started with. From the outside that
+is indistinguishable from a build that failed, and it has cost three rounds of
+wrong diagnosis in a single day.
+
+After a build, **restart the MCP client** before concluding anything about
+whether a change worked.
+
+`serverInfo.version` reports the live tool count — `0.1.0 (32 tools)` — so a
+stale process is visible at a glance: compare it against what the client shows.
+`src/build-freshness.test.ts` covers the other half, a `dist/` that has fallen
+behind `src/`.
+
+## What may leave this server
+
+Everything that reaches a model — tool responses, tool descriptions, input schemas, resource bodies,
+warning strings, error text — states what the reader needs and never how the backend works. No
+internal component names, storage design, refresh cadence, table or column names, SQL, or internal
+identifiers. Include instead what changes a reader's behaviour: whether a figure is an estimate,
+whether two figures are comparable, how a record was matched.
+
+The test: does removing it change what a reader would *do*?
+
+Over-correcting is also a failure. A reader who cannot tell an estimate from a billed figure has
+been failed too. Reframe rather than delete — state the reliability, drop the cause.
+
+Two reasons this is enforced rather than advised. It has shipped twice, both times written by
+someone trying to be helpful; explaining the mechanism feels like generosity and reads from outside
+as a map. And this server reaches the API over HTTP like any other client, so it cannot keep such a
+claim true — the knowledge came from reading the backend, and nothing will tell it when that stops
+being accurate.
+
+`src/leak-scan.test.ts` enforces it and fails the build. **If you add a surface that reaches a
+model, add it to that scanner.** It also asserts the de-leaked text still carries the instructions
+that change behaviour, so it cannot be satisfied by saying nothing.
+
 ## Adding API actions
 
 The exposed surface is **read-only by construction**. To add an endpoint:
@@ -50,22 +89,14 @@ The exposed surface is **read-only by construction**. To add an endpoint:
 
 Maintainers publish to npm from a clean `main`:
 
-1. Bump the version and push the tag. The `npm version` step runs a hook
-   (`scripts/sync-version.mjs`) that propagates the new version into
-   `server.json`, so both stay aligned:
+```bash
+npm version <patch|minor|major>
+git push --follow-tags
+```
 
-   ```bash
-   npm version <patch|minor|major>
-   git push --follow-tags
-   ```
-
-2. Create a **GitHub Release** for the new tag (Releases → Draft a new release →
-   choose the tag → Publish). Publishing the Release is what triggers
-   `.github/workflows/publish.yml`, which builds, tests, and runs
-   `npm publish --provenance`.
-
-A pushed tag alone does **not** publish — the published GitHub Release is the
-deliberate gate (`publish.yml` runs `on: release: [published]`).
+The `npm version` step runs a hook (`scripts/sync-version.mjs`) that propagates
+the new version into `server.json`, so both stay aligned. CI publishes the
+tagged version (see `.github/workflows/publish.yml`).
 
 ## Roadmap
 

@@ -1,7 +1,7 @@
 {
   "name": "@cloudyali/mcp-server",
   "version": "0.1.0",
-  "description": "MCP server exposing CloudYali cost, budgets, recommendations, anomalies, and inventory data to Claude (and other MCP-capable AI clients). Browser-based Cognito auth with auto-refresh; hard-locked to read-only operations.",
+  "description": "MCP server exposing CloudYali cost, budgets, cost-savings opportunities, anomalies, and inventory data to Claude (and other MCP-capable AI clients). Browser-based Cognito auth with auto-refresh; read-only by construction — no write endpoint is reachable.",
   "license": "MIT",
   "author": "CloudYali <support@cloudyali.io> (https://cloudyali.io)",
   "homepage": "https://github.com/cloudyali/cloudyali-mcp-server#readme",
@@ -31,7 +31,7 @@
   },
   "files": [
     "dist",
-    "server.json"
+    "!dist/**/*.map"
   ],
   "mcpName": "io.github.cloudyali/cloudyali-mcp-server",
   "scripts": {
@@ -41,8 +41,10 @@
     "login": "node dist/login.js",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "smoke": "npm run build && node scripts/smoke.mjs",
     "coverage": "vitest run --coverage",
-    "version": "node scripts/sync-version.mjs && git add server.json"
+    "version": "node scripts/sync-version.mjs && git add server.json",
+    "charts": "node scripts/build-readme-charts.mjs"
   },
   "publishConfig": {
     "access": "public"

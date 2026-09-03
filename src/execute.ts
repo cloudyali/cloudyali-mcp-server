@@ -7,6 +7,10 @@ import { findAction, isBlockedAction, searchActions } from "./catalog.js";
 import { getValidAccessToken } from "./auth.js";
 import { buildQueryString, substitutePath } from "./request.js";
 import { CLOUDYALI_API_URL, CONSOLE_URL, STATIC_JWT_OVERRIDE } from "./config.js";
+import { apiConcurrency, apiThrottle } from "./throttle.js";
+import { scrubErrorText } from "./errors.js";
+import { ProjectOptions, projectBody, redact } from "./project.js";
+import { RESPONSE_POLICY } from "./shapes.js";
 
 async function buildHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const token = await getValidAccessToken({ forceRefresh });
@@ -86,9 +90,22 @@ export async function requestWithRetry(
       throw new Error("Request aborted by the caller.");
     }
     try {
-      const timeout = AbortSignal.timeout(timeoutMs);
-      const signal = opts.signal ? anySignal([timeout, opts.signal]) : timeout;
-      const res = await fetch(url, { ...init, signal });
+      // Inside the retry loop on purpose: a retry is another request against the
+      // same backend, and a 5xx-driven retry storm is precisely what we bound.
+      await apiThrottle.take(opts.signal);
+      // The slot is held across the fetch, not just its start: the point is to
+      // bound how many requests are sitting on the backend at once, which the
+      // rate bucket above does not do.
+      //
+      // The per-attempt timeout starts INSIDE the slot. Started outside, a
+      // request that queued behind three others would spend its whole budget
+      // waiting and then time out without ever having been sent — a queue that
+      // manufactures the failures it exists to prevent.
+      const res = await apiConcurrency.run(() => {
+        const timeout = AbortSignal.timeout(timeoutMs);
+        const signal = opts.signal ? anySignal([timeout, opts.signal]) : timeout;
+        return fetch(url, { ...init, signal });
+      });
       if (isTransientStatus(res.status) && attempt < maxRetries) {
         await sleep(backoff(attempt));
         continue;
@@ -113,13 +130,28 @@ export async function requestWithRetry(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export async function executeAction(args: {
+export type ActionResult = {
+  request: { action_id: string; method: string; path: string };
+  status: number;
+  ok: boolean;
+  body: unknown;
+};
+
+/**
+ * Call a catalog action and return the shaped result as an object.
+ *
+ * The typed tools in src/tools consume this; `executeAction` below is the same
+ * thing stringified, kept for the raw escape-hatch tool. Both go through the
+ * same auth, throttle, retry and response-policy path — there is deliberately
+ * no route to the API that skips the projection.
+ */
+export async function executeActionRaw(args: {
   id: string;
   path_params?: Record<string, unknown>;
   query_params?: Record<string, unknown>;
   body?: unknown;
   signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<ActionResult> {
   const action = findAction(args.id);
   if (!action) {
     const suggestions = searchActions(args.id, undefined, 5).map((a) => a.id);
@@ -165,15 +197,190 @@ export async function executeAction(args: {
     // leave as string
   }
 
-  const result = {
+  const result: ActionResult = {
     request: {
       action_id: action.id,
       method: action.method,
-      url,
+      // The path TEMPLATE only (review note, GA/public build): the caller already
+      // knows its own arguments, so echoing the fully-substituted URL (host +
+      // path params + query values) back to an untrusted MCP client adds nothing
+      // and leaks the deployment host and request internals verbatim.
+      path: action.path,
     },
     status: res.status,
     ok: res.ok,
-    body: parsed,
+    // Both directions are filtered. Non-2xx bodies are trimmed to the API's
+    // intentional error contract; 2xx bodies — which carry far more data — go
+    // through the per-action response policy. Neither is relayed verbatim.
+    body: res.ok ? shapeResponse(action.id, parsed) : trimErrorBody(parsed),
   };
-  return JSON.stringify(result, null, 2);
+  return result;
+}
+
+/** String form of executeActionRaw, for the raw execute_action tool. */
+export async function executeAction(args: Parameters<typeof executeActionRaw>[0]): Promise<string> {
+  return JSON.stringify(await executeActionRaw(args), null, 2);
+}
+
+// Set CLOUDYALI_MCP_SHAPE_AUDIT=1 to have every dropped field path written to
+// stderr. That is how you close the gap on an action still using redaction:
+// run a real query, read what was dropped, and promote it to an allowlist.
+const SHAPE_AUDIT = process.env.CLOUDYALI_MCP_SHAPE_AUDIT === "1";
+
+/**
+ * Apply the action's response policy to a successful body.
+ *
+ * Fails closed: an action with no policy returns nothing but a pointer to the
+ * fix. That is deliberate — the failure mode of this system is a new action
+ * shipping without anyone deciding what it may expose, and a visible empty
+ * result gets fixed while a silent passthrough does not.
+ */
+/** Does this value carry anything? Used to tell a failed projection from a real empty. */
+function isNonEmpty(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v as object).length > 0;
+  return true;
+}
+
+/**
+ * Find a container the shape meant to keep but that projected to nothing.
+ *
+ * The whole-body check below only fires when everything collapses. A single
+ * field collapsing inside a body whose siblings survived is worse, because it
+ * looks like a healthy response with one honestly-empty field: `facets.resolve`
+ * shipped with `dimensions: "map"` against a map of objects, so every call
+ * returned a valid-looking body reporting that the account had no dimensions at
+ * all. Same defect as views.list, one level down and therefore invisible to the
+ * check that caught views.list.
+ *
+ * Returns the dot-path of the first collapse, or undefined.
+ */
+function findCollapse(input: unknown, out: unknown, path = ""): string | undefined {
+  const isContainer = (v: unknown): boolean => v !== null && typeof v === "object";
+
+  if (Array.isArray(out)) {
+    if (!Array.isArray(input)) return undefined;
+    for (let i = 0; i < out.length; i++) {
+      const here = `${path}[${i}]`;
+      if (isContainer(out[i]) && !isNonEmpty(out[i]) && isContainer(input[i]) && isNonEmpty(input[i])) return here;
+      const deeper = findCollapse(input[i], out[i], here);
+      if (deeper) return deeper;
+    }
+    return undefined;
+  }
+
+  if (!isContainer(out) || !isContainer(input)) return undefined;
+  const inObj = input as Record<string, unknown>;
+  for (const [k, ov] of Object.entries(out as Record<string, unknown>)) {
+    const iv = inObj[k];
+    const here = path ? `${path}.${k}` : k;
+    if (isContainer(ov) && !isNonEmpty(ov) && isContainer(iv) && isNonEmpty(iv)) return here;
+    const deeper = findCollapse(iv, ov, here);
+    if (deeper) return deeper;
+  }
+  return undefined;
+}
+
+export function shapeResponse(actionId: string, parsed: unknown): unknown {
+  const policy = RESPONSE_POLICY[actionId];
+  const opts: ProjectOptions | undefined = SHAPE_AUDIT ? { dropped: new Set<string>() } : undefined;
+
+  let out: unknown;
+  if (!policy) {
+    process.stderr.write(
+      `cloudyali-mcp: no response policy for action "${actionId}"; body withheld. Add one in src/shapes.ts.\n`,
+    );
+    return { note: `No response policy is defined for "${actionId}", so its body was withheld.` };
+  }
+  out = policy.kind === "allowlist" ? projectBody(parsed, policy.shape, opts) : redact(parsed, opts);
+
+  // A shape that does not fit its body projects to nothing, and nothing is
+  // indistinguishable from an honest empty result. views.list shipped with an
+  // array shape against an object body and reported "no saved cost views" for an
+  // account with several — a confident wrong answer, reported onward as fact,
+  // with no signal anywhere that a projection had failed.
+  //
+  // stderr is not enough: under an MCP client it is a log file nobody reads, which
+  // is the same reason the login verification code was useless there. So this goes
+  // into the body, where the model reading the result will see it.
+  if (policy.kind === "allowlist" && isNonEmpty(parsed) && !isNonEmpty(out)) {
+    process.stderr.write(
+      `cloudyali-mcp: response shape for "${actionId}" did not fit the body; nothing survived projection.\n`,
+    );
+    return {
+      error: `The response shape for "${actionId}" does not match what the API returned, so no data survived. This is a bug in this server, not an empty result — do not report it as "none found".`,
+    };
+  }
+
+  // Partial collapse. Serving the surviving half is not the safe option here:
+  // the half that vanished is reported onward as "this account has none", which
+  // is a confident wrong answer with nothing anywhere to contradict it.
+  if (policy.kind === "allowlist") {
+    const collapsed = findCollapse(parsed, out);
+    if (collapsed) {
+      process.stderr.write(
+        `cloudyali-mcp: response shape for "${actionId}" emptied "${collapsed}"; the field exists in the body but nothing survived projection.\n`,
+      );
+      return {
+        error: `The response shape for "${actionId}" does not fit the field "${collapsed}": the API returned data there and none of it survived. This is a bug in this server, not an empty result — do not report "${collapsed}" as empty or absent.`,
+      };
+    }
+  }
+
+  if (opts?.dropped?.size) {
+    process.stderr.write(
+      `cloudyali-mcp: shape audit ${actionId} dropped ${opts.dropped.size} path(s): ${[...opts.dropped]
+        .sort()
+        .join(", ")}\n`,
+    );
+  }
+  return out;
+}
+
+// Longest error string relayed to the client per field.
+const MAX_ERROR_FIELD_LEN = 300;
+
+// Error-contract fields a client legitimately needs: the svcerror shape
+// {code, message, details} plus the savings transition-result fields
+// (error/current_status/allowed_transitions/missing) that drive retry UX.
+// `details` is deliberately absent. pkg/svcerror puts the raw Go error there —
+// `errorResponse.Error()` verbatim — so it is the channel that carries pgx and
+// pq messages, SQLSTATE codes and column names straight into model context. A
+// real report: order_by:"cost" produced `column "cost" does not exist`, which
+// is schema disclosure dressed up as a helpful error. `message` is the API's
+// intentional, authored text and stays.
+const ERROR_FIELD_ALLOWLIST = [
+  "code",
+  "message",
+  "error",
+  "current_status",
+  "allowed_transitions",
+  "missing",
+] as const;
+
+// trimErrorBody reduces a non-2xx backend body to the allowlisted error-contract
+// fields (review note, GA/public build): anything else — stack traces, driver
+// errors, oversized payloads a misconfigured backend might emit — is dropped
+// rather than relayed verbatim to an untrusted MCP client. Strings are capped;
+// string arrays (allowed_transitions/missing) are kept as-is.
+export function trimErrorBody(parsed: unknown): Record<string, unknown> {
+  const cap = (s: string) =>
+    s.length > MAX_ERROR_FIELD_LEN ? `${s.slice(0, MAX_ERROR_FIELD_LEN)}…` : s;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const src = parsed as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of ERROR_FIELD_ALLOWLIST) {
+      const v = src[key];
+      if (typeof v === "string" && v.length > 0) out[key] = cap(scrubErrorText(v));
+      else if (typeof v === "number") out[key] = v;
+      else if (Array.isArray(v) && v.every((e) => typeof e === "string")) out[key] = v;
+    }
+    if (Object.keys(out).length === 0) out.error = "request failed";
+    return out;
+  }
+  if (typeof parsed === "string" && parsed.trim().length > 0) {
+    return { error: cap(scrubErrorText(parsed.trim())) };
+  }
+  return { error: "request failed" };
 }

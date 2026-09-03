@@ -65,15 +65,15 @@ describe("buildQueryString", () => {
 describe("substitutePath", () => {
   it("substitutes and encodes declared path params", () => {
     const action = makeAction({
-      path: "/v1/recommendations/:id",
+      path: "/v1/savings/opportunities/:id",
       pathParams: { id: { type: "integer", description: "ID", required: true } },
     });
-    expect(substitutePath(action, { id: 42 })).toBe("/v1/recommendations/42");
+    expect(substitutePath(action, { id: 42 })).toBe("/v1/savings/opportunities/42");
   });
 
   it("throws on a missing required path param", () => {
     const action = makeAction({
-      path: "/v1/recommendations/:id",
+      path: "/v1/savings/opportunities/:id",
       pathParams: { id: { type: "integer", description: "ID", required: true } },
     });
     expect(() => substitutePath(action, {})).toThrow(/Missing required path param: id/);
