@@ -20,6 +20,7 @@ import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { createHash, randomBytes } from "node:crypto";
 import { PORTAL_URL } from "./config.js";
+import { BRAND_MARK_SVG } from "./brand/assets.js";
 import { nowEpochSeconds, saveCredentials, StoredCredentials } from "./tokenStore.js";
 import { isDirectRun } from "./cli.js";
 
@@ -109,18 +110,44 @@ export function callbackHtml(): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CloudYali — CLI sign-in</title>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 32rem; margin: 4rem auto; padding: 0 1.5rem; color: #202124; line-height: 1.55; }
-  h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
-  p { color: #5f6368; margin: 0; }
-  .err { color: #a8261c; word-break: break-word; }
+  /* CloudYali tokens, the same ones cloudyali://design publishes. This page is
+     the first thing a new user sees after installing, and it is served by this
+     repo rather than the console — so it is ours to keep on-brand. Colours are
+     literal here on purpose: the page must render before any stylesheet or font
+     could load from the network, and a localhost callback has no network. */
+  :root {
+    color-scheme: light dark;
+    --page: #f2f6fa; --surface: #ffffff; --ink: #18293d; --ink-2: #32465c;
+    --muted: #64788f; --border: rgba(24,41,61,0.10); --err: #e03228;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #101b29; --surface: #18293d; --ink: #ffffff; --ink-2: #cfdae5;
+      --muted: #93a7bd; --border: rgba(255,255,255,0.12); --err: #fa6c61;
+    }
+  }
+  body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: var(--page); color: var(--ink); line-height: 1.55; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 28px 32px; max-width: 30rem; margin: 1.5rem; }
+  .mark { display: block; margin-bottom: 20px; }
+  .mark svg { display: block; height: 26px; width: auto; }
+  h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 .35rem; letter-spacing: -0.01em; }
+  p { color: var(--ink-2); margin: 0; }
+  .err { color: var(--err); word-break: break-word; }
+  #closing { color: var(--muted); }
 </style>
 </head>
 <body>
+  <div class="card">
+  <span class="mark">${BRAND_MARK_SVG}</span>
   <h1 id="status">Finishing CloudYali sign-in…</h1>
   <p id="detail">Handing your session to the local CLI. You can close this tab once it confirms.</p>
+  </div>
 <script>
 (function () {
   function escapeHtml(s) {

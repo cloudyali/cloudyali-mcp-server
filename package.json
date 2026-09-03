@@ -43,7 +43,8 @@
     "test": "vitest run",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "coverage": "vitest run --coverage",
-    "version": "node scripts/sync-version.mjs && git add server.json"
+    "version": "node scripts/sync-version.mjs && git add server.json",
+    "charts": "node scripts/build-readme-charts.mjs"
   },
   "publishConfig": {
     "access": "public"

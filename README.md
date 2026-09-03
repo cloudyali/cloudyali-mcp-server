@@ -137,13 +137,16 @@ Requires Node.js 20+ and git.
 
 ### 1. Get the code and build it
 
+`npm install` also builds `dist/`, via the `prepare` script — there is no separate
+build step. The last line checks that the build landed and runs the test suite.
+
 **macOS / Linux**
 
 ```bash
 git clone https://github.com/cloudyali/cloudyali-mcp-server.git
 cd cloudyali-mcp-server
-npm install          # installs deps and builds dist/ via the prepare script
-ls dist/index.js && npm test   # verify the build
+npm install
+ls dist/index.js && npm test
 ```
 
 **Windows (PowerShell)**
@@ -151,8 +154,8 @@ ls dist/index.js && npm test   # verify the build
 ```powershell
 git clone https://github.com/cloudyali/cloudyali-mcp-server.git
 cd cloudyali-mcp-server
-npm install          # installs deps and builds dist\ via the prepare script
-Test-Path dist\index.js; npm test   # verify the build
+npm install
+Test-Path dist\index.js; npm test
 ```
 
 > **Not on npm yet.** Once published, the clone-and-build step disappears and
@@ -256,6 +259,16 @@ tool — or just ask the assistant to *"log in to CloudYali"*. It:
    (`%USERPROFILE%\.cloudyali-mcp\credentials.json` on Windows), created with mode
    `0600` on macOS and Linux and protected by your profile's ACLs on Windows.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/login-signed-in-dark.png">
+  <img alt="The localhost callback page after a successful sign-in: the CloudYali mark, the heading You are signed in, and a line saying the CLI has a valid session and the tab will close in 59 seconds" src="docs/login-signed-in-light.png">
+</picture>
+
+That page is served by this repo, not the console, from a listener on localhost.
+It closes itself after a minute — and if the browser refuses to let it, it says
+so, because a countdown that reaches zero and does nothing looks like a bug. You
+can close it yourself at any point; the session is already saved.
+
 Tokens refresh themselves; you will not sign in again until the refresh token
 expires. They travel only in the browser URL fragment to a localhost listener —
 never to a remote server or any server log.
@@ -336,13 +349,15 @@ refuse to start rather than start and expose it.
 
 ## Develop locally
 
-```bash
-npm install        # also builds dist/ via the prepare script
-npm test           # vitest: catalog contract, response shapes, leak scan, build freshness
-npm run smoke      # boots dist/index.js over stdio and drives the real MCP handshake
-npm run dev        # tsc --watch
-npm run login      # exercises the live browser login against the console
-```
+| Command | What it does |
+|---|---|
+| `npm install` | Installs dependencies and builds `dist/` via the `prepare` script. |
+| `npm test` | Vitest: catalog contract, response shapes, leak scan, build freshness. |
+| `npm run smoke` | Boots `dist/index.js` over stdio and drives the real MCP handshake. |
+| `npm run build` | One-shot `tsc`. |
+| `npm run dev` | `tsc --watch`. |
+| `npm run login` | Exercises the live browser login against the console. |
+| `npm run charts` | Re-renders the README charts into `docs/`. |
 
 `npm run smoke` is the release gate. It boots the built server exactly as a client
 would, then asserts over the wire that the typed surface is served and the proxy
@@ -352,6 +367,22 @@ act on, and that the design contract is reachable.
 
 `npm run login` uses the production console; set `PORTAL_URL` to point it
 elsewhere (e.g. `PORTAL_URL=http://localhost:3000`).
+
+Every chart above is Apache ECharts 5 — the same library the console uses —
+drawn through the theme this server publishes at `cloudyali://echarts-theme`.
+`scripts/build-readme-charts.mjs` imports that theme from `dist/` rather than
+copying it, so the docs cannot drift from what a model is told to register. It
+needs three packages that are deliberately not dependencies of this one, since
+nothing about regenerating docs ships:
+
+```bash
+npm install --no-save playwright echarts @fontsource/inter
+npx playwright install chromium
+npm run build && npm run charts
+```
+
+Every figure in those charts is invented. They are shaped like real bills, but
+nothing in `docs/` is drawn on a real account, and nothing should be.
 
 ### Run your local build in a client
 
@@ -363,13 +394,15 @@ one whose change did not work.
 ```bash
 npm run build
 claude mcp add cloudyali-dev -- node "$(pwd)/dist/index.js"
-# after editing src/: npm run build, then reconnect (/mcp or restart the client)
 ```
 
 ```powershell
 npm run build
 claude mcp add cloudyali-dev -- node "$PWD\dist\index.js"
 ```
+
+After every edit to `src/`, run `npm run build` again and reconnect the client
+(`/mcp` in Claude Code, or restart it).
 
 Adding an endpoint means appending to `src/catalog.ts` with `readOnly: true`,
 declaring what it may return in `src/shapes.ts`, and adding a test. See
