@@ -181,7 +181,7 @@ export const COST_TOOLS: ToolDef[] = [
         period: {
           type: "object",
           description:
-            'Window as {"from","to"}, RFC3339 and UTC ONLY — "2026-08-01T00:00:00Z" or "+00:00". A bare date or any other offset is rejected outright. Omit for all available history (about seven months of billing).',
+            'Window as {"from","to"}, RFC3339 and UTC ONLY — "2026-08-01T00:00:00Z" or "+00:00". A bare date or any other offset is rejected outright. Omit for all available history.',
         },
       },
       ["domain"],
@@ -285,7 +285,7 @@ export const SAVINGS_TOOLS: ToolDef[] = [
     name: "get_savings_opportunity",
     title: "One savings opportunity",
     description:
-      "Detail for a single opportunity: the resource it targets, its state, savings amount, risk and effort, and detection timestamps. Narrative sections — provenance, why-evidence, runbook, audit timeline — are not surfaced through the MCP.",
+      "Detail for a single opportunity: the resource it targets, its state, savings amount, risk and effort, where the finding came from, and detection timestamps.",
     openWorld: true,
     inputSchema: obj({ id: int("Opportunity ID, from list_savings_opportunities.", { minimum: 1 }) }, ["id"]),
     call: (a) => ({ action: "recommendations.get", path_params: { id: a.id } }),
@@ -522,7 +522,7 @@ export const VIEW_TOOLS: ToolDef[] = [
       {
         id: str("View id, from list_cost_views.", { minLength: 1 }),
         days: viewDays,
-        limit: int("Max rows. Keep this small — the server's own ceiling is high enough to return more than anyone can read.", { minimum: 1, maximum: 1000 }),
+        limit: int("Max rows. Keep this small: a few hundred resource rows is more than anyone reads, and the useful ones are at the top.", { minimum: 1, maximum: 1000 }),
         offset: int("Row offset, for paging.", { minimum: 0 }),
       },
       ["id"],

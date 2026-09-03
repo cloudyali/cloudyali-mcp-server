@@ -70,7 +70,7 @@ export const ANOMALY_TOOLS: ToolDef[] = [
     name: "get_anomaly",
     title: "One anomaly",
     description:
-      "Detail for a single anomaly: provider, service, account, expected vs actual cost, impact and deviation percentage. How the detector scored it is not surfaced — rank and compare anomalies by cost impact, which is the figure someone can act on.",
+      "Detail for a single anomaly: provider, service, account, expected vs actual cost, impact and deviation percentage. Rank and compare anomalies by cost impact — that is the figure someone can act on.",
     openWorld: true,
     inputSchema: obj({ id: str("Anomaly UUID, from list_anomalies.", { minLength: 8 }) }, ["id"]),
     call: (a) => ({ action: "anomalies.get", path_params: { id: a.id } }),
@@ -330,7 +330,7 @@ export const INVENTORY_TOOLS: ToolDef[] = [
         structured: o,
         text:
           listSummary("tag keys", rows, {
-            emptyHint: "No tags are recorded on any resource yet — inventory may not have synced, or nothing is tagged.",
+            emptyHint: "No resource carries a tag. Confirm with list_resources that this account has resources at all — if it does, nothing on them is tagged.",
           }) + capped,
       };
     },

@@ -113,8 +113,14 @@ describe("MCP resources", () => {
     expect(guide).toMatch(/how much a number can be trusted/i);
     expect(guide).toMatch(/changes what a reader would \*?do\*?/i);
     // A worked before/after, because a rule without an example gets read as a vibe.
-    expect(guide).toMatch(/savings engine does not yet emit/);
+    // The ✗ example is deliberately generic. It used to quote the real footer
+    // verbatim — which put the actual product gap into the one resource every
+    // model is told to read, and made this test pin the leak in place. That is
+    // now three times a test has held a leaked sentence steady; a negative
+    // example is still model-facing text.
+    expect(guide).toMatch(/assembled by hand/);
     expect(guide).toMatch(/point-in-time estimates/);
+    expect(guide).not.toMatch(/savings engine|does not yet/i);
   });
 
   it("states the three things every generated artifact must carry", () => {

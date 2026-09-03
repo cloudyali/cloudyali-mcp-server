@@ -39,6 +39,12 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   // eight-sigma emergency over forty-one cents — accurate, unusable, and an
   // invitation to rank anomalies by a statistic instead of by dollars.
   [/z[-_ ]?score|\bsigma\b|standard deviation|engine_version|config_checksum|rootCauseAnalysis|\brule_id\b/i, "detector internals"],
+  // What CloudYali has and has not built. This category had no guard at all until
+  // an audit found the real footer quoted verbatim inside the design resource —
+  // as the ✗ half of a worked example teaching models not to write it. A negative
+  // example is still model-facing text, and a resource every model is told to read
+  // is the worst possible place to keep the sentence alive.
+  [/does not yet|not yet (support|emit|available|implemented)|coming soon|\broadmap\b|planned for|we are migrating|not surfaced through the MCP/i, "roadmap or internal state"],
 ];
 
 /** Everything that actually reaches a model. Source comments do not — they are compiled away. */

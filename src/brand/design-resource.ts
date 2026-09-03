@@ -93,8 +93,7 @@ semantic colours above and does not draw from the series ramp at all.**
 - **Diverging** (change vs the previous period): \`${C.diverging[0]}\` (up) → \`${C.diverging[1]}\` (flat) → \`${C.diverging[2]}\` (down)
 
 The diverging scale is red → teal, **not** red → green. Red/green is the obvious pair and the wrong
-one: under deuteranopia it scores a perceptual distance of 16, against 59 for red/teal, and roughly
-one man in twelve reads a spend chart.
+one: roughly one man in twelve cannot tell them apart, and one of them is reading your spend chart.
 
 ## Rules that are not about colour
 
@@ -151,11 +150,11 @@ Then stop. It is a source line, not a methodology section.
 There is a real distinction to hold here, because over-correcting is its own failure. Two things
 look like "internal detail" and only one of them is:
 
-- **How the system is built** — which internal component produced a finding, what it does not yet
-  support, which upstream services were consulted, whether a section was assembled by hand. This
-  has no reader value and does not belong in an artifact that is one share away from being public.
-  \`the savings engine does not yet emit these findings itself\` is a product roadmap disclosure
-  wearing the costume of a footnote.
+- **How the system is built** — which internal component produced a finding, which upstream
+  services were consulted, what CloudYali does or does not cover, whether a section was assembled
+  by hand. This has no reader value and does not belong in an artifact that is one share away from
+  being public. A sentence naming which subsystem fell short is a product disclosure wearing the
+  costume of a footnote.
 - **How much a number can be trusted** — estimate versus billed, point-in-time versus continuously
   monitored, a match made on an identifier versus inferred. This is exactly what the reader needs
   and it stays.
@@ -166,10 +165,10 @@ changes what they do. Knowing which subsystem computed it does not.
 So the fix is almost always a reframe rather than a deletion — state the reliability, drop the
 organisational cause:
 
-> ✗ Azure and GCP findings come from a manual sweep of the CloudYali inventory against the bills —
->   the savings engine does not yet emit these findings itself.
+> ✗ These figures were assembled by hand, because the component that should produce them
+>   has no coverage for this provider.
 >
-> ✓ Azure and GCP figures are point-in-time estimates.
+> ✓ These figures are point-in-time estimates.
 
 Same warning to the reader. None of the org chart.
 

@@ -16,7 +16,7 @@ const RAW_TOOLS: Tool[] = [
   {
     name: "search_actions",
     description:
-      "Search the read-only CloudYali (\"cy\") API catalog for cloud cost, spend, budgets, cost-savings opportunities, cost anomalies, and resource inventory. Use this for any CloudYali / cy / cloud-cost / FinOps / cloud-inventory question. Returns matching actions with their IDs, descriptions, and parameter schemas. Call this first to discover the right action, then call execute_action with the chosen id. Scope: cost reports/aggregation/spend/filters; budgets (list/summary/get/resources/history); cost-savings opportunities (list with lifecycle filters, KPI summary, per-opportunity detail with runbook and provenance); anomalies (list/summary/get/preferences-read); and inventory (resource list/search/detail plus provider/type/region/account/tag filters). These are the same endpoints the portal UI and reports use, so the numbers match. This server performs NO writes: every mutation — savings-lifecycle transitions, status updates, assignments, anomaly feedback, alert-preference writes, PUT/DELETE, and all account / customer / user / sync / claim / registration endpoints — is blocked. Make those changes in the portal.",
+      "Search the read-only CloudYali (\"cy\") API catalog for cloud cost, spend, budgets, cost-savings opportunities, cost anomalies, and resource inventory. Use this for any CloudYali / cy / cloud-cost / FinOps / cloud-inventory question. Returns matching actions with their IDs, descriptions, and parameter schemas. Call this first to discover the right action, then call execute_action with the chosen id. Scope: cost reports, aggregation, spend and filters; budgets; cost-savings opportunities; anomalies; and resource inventory. The figures match what the CloudYali portal shows. This server performs NO writes — every mutation is blocked, and administrative endpoints are not reachable at all. Make changes in the portal.",
     inputSchema: {
       type: "object",
       properties: {
@@ -43,7 +43,7 @@ const RAW_TOOLS: Tool[] = [
   {
     name: "execute_action",
     description:
-      "Execute a read-only CloudYali API action by id. Use search_actions first to find the id and required params. Returns { status, ok, body } from the API. Every write (PUT/DELETE, status updates, savings-lifecycle transitions, assignments, anomaly feedback, alert-preference writes) and all account / customer / user / sync / claim / registration endpoints are hard-blocked and return an error.",
+      "Execute a read-only CloudYali API action by id. Use search_actions first to find the id and required params. Returns { status, ok, body } from the API. Writes and administrative endpoints are blocked and return an error.",
     inputSchema: {
       type: "object",
       properties: {
@@ -55,7 +55,7 @@ const RAW_TOOLS: Tool[] = [
         },
         query_params: {
           type: "object",
-          description: "Query string parameter values. Array values are serialized as repeated params, except params whose schema declares comma-joining (e.g. assignedUser).",
+          description: "Query string parameter values. Array values are serialized as repeated params, except where the action's schema declares comma-joining.",
           additionalProperties: true,
         },
         body: {
