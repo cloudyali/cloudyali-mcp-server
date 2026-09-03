@@ -12,14 +12,19 @@ It runs as a local process on your machine. Your cost data goes from CloudYali's
 API to your MCP client and nowhere else — there is no CloudYali-hosted MCP
 service in the path.
 
+> *"Find everything we're paying for that nobody is using — idle, unattached,
+> over-allocated or forgotten, across every cloud. Pure waste only: exclude
+> rightsizing and commitment recommendations. Price what can be priced."*
+
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/spend-by-service-dark.png">
-  <img alt="Stacked bar chart of monthly cloud spend by service across six months, drawn in the CloudYali chart palette" src="docs/spend-by-service-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/waste-by-category-dark.png">
+  <img alt="Horizontal bar chart ranking priced monthly cloud waste by category, drawn in the CloudYali chart palette" src="docs/waste-by-category-light.png">
 </picture>
 
-<sub>Charts the assistant builds use the CloudYali palette and the Apache ECharts
-theme this server ships, so they match the console rather than whatever the model
-picks. Figures above are illustrative.</sub>
+<sub>One question, answered across three providers by walking inventory, cost and
+savings together — then charted in the CloudYali palette using the Apache ECharts
+theme this server ships, so it matches the console rather than whatever the model
+picks. Figures illustrative.</sub>
 
 Requires a CloudYali account — sign in at
 [console.cloudyali.io](https://console.cloudyali.io).
@@ -33,6 +38,11 @@ Requires a CloudYali account — sign in at
 - *"Compare this month's spend to last month — what changed?"*
 - *"Show daily GCP spend for June as a chart."*
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/spend-by-service-dark.png">
+  <img alt="Stacked bar chart of monthly cloud spend by service across six months, drawn in the CloudYali chart palette" src="docs/spend-by-service-light.png">
+</picture>
+
 **Saved cost views**
 
 - *"What saved cost views do we have?"*
@@ -42,6 +52,18 @@ Requires a CloudYali account — sign in at
 A saved view is a question someone already decided was worth asking, and it
 carries the whole-bill denominator — so answers come back as *"$4,200, a third of
 the bill"* rather than a number with no scale.
+
+**Waste**
+
+- *"What are we paying for that nobody is using?"*
+- *"Which unattached EBS volumes have been sitting there longest?"*
+- *"Are any Elastic IPs allocated but not attached to anything?"*
+- *"Break the waste down by category and price what can be priced."*
+
+Nothing in the API answers this on its own. The assistant reaches it by crossing
+inventory against cost against open savings findings — which is the shape of
+question worth having an assistant for, and the reason the tools are typed rather
+than one generic endpoint.
 
 **Savings**
 
@@ -58,8 +80,24 @@ the bill"* rather than a number with no scale.
 **Anomalies**
 
 - *"Any cost anomalies in the last 7 days?"*
+- *"Review every anomaly since April — which are real spend changes and which
+  are detector artefacts? And did any of them actually reach anyone?"*
 - *"Summarise anomaly count and cost impact for the quarter."*
-- *"Is anomaly alerting switched on for all our accounts?"*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/anomaly-days-dark.png">
+  <img alt="Daily cloud spend over five months with each detected anomaly marked on its day, sized by cost impact and coloured by whether it is a real spend change" src="docs/anomaly-days-light.png">
+</picture>
+
+Two things worth noticing in that picture, because both are the point. Anomalies
+are plotted *against the spend line*, so a large marker on a flat stretch is
+visibly not a spend change — an expected-cost-of-zero on a service that had been
+billing daily is an artefact of detection, not something to escalate. And the red
+is not a palette choice: it is the reserved `increase` colour, which means one
+thing across every chart this server produces. The last clause of that prompt —
+*did any of them reach anyone* — is `get_anomaly_alert_settings`, which reports
+whether alerting is on and nothing about how it is wired.
+
 
 **Tag governance**
 
